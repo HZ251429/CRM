@@ -75,6 +75,11 @@ export const usersApi = crud('users');
 export const rolesApi = crud('roles');
 export const productsApi = crud('products');
 export const tasksApi = crud('tasks');
+export const notificationsApi = {
+  list: (limit = 30) => request(`/notifications?limit=${limit}`),
+  read: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
+  readAll: () => request('/notifications/read-all', { method: 'POST' }),
+};
 export const tenantsApi = {
   list: () => request('/admin/tenants'),
   details: (id) => request(`/admin/tenants/${id}/details`),

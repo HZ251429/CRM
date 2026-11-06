@@ -26,6 +26,8 @@ import com.hz.crm.activity.Activity;
 import com.hz.crm.activity.ActivityRepository;
 import com.hz.crm.customer.Customer;
 import com.hz.crm.customer.CustomerRepository;
+import com.hz.crm.product.Product;
+import com.hz.crm.product.ProductRepository;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
 import com.hz.crm.task.SalesTask;
@@ -58,9 +60,11 @@ public class DashboardController {
 	private final SalesTaskRepository tasks;
 	private final TaskProgressService progress;
 	private final AccessService access;
+	private final ProductRepository products;
 
 	public DashboardController(CustomerRepository customers, ActivityRepository activities, SalesTaskRepository tasks,
-			TaskProgressService progress, AccessService access) {
+			TaskProgressService progress, AccessService access, ProductRepository products) {
+		this.products = products;
 		this.customers = customers;
 		this.activities = activities;
 		this.tasks = tasks;
@@ -159,6 +163,36 @@ public class DashboardController {
 		r.put("creditOutstanding", sales.stream().map(a -> nz(a.getCreditAmount())).reduce(BigDecimal.ZERO, BigDecimal::add));
 		r.put("deals", periods);
 		r.put("series", series);
+
+		// task status breakdown for the progress card
+		Map<String, Long> statusCounts = new LinkedHashMap<>();
+		for (TaskProgressService.Status st : TaskProgressService.Status.values()) {
+			statusCounts.put(st.name(), mine.stream()
+					.filter(t -> TaskProgressService.status(t, sold.getOrDefault(t.getId(), 0L)) == st).count());
+		}
+		r.put("taskStatus", statusCounts);
+		r.put("unitsSoldOnTasks", mine.stream().mapToLong(t -> Math.min(t.getUnits(), sold.getOrDefault(t.getId(), 0L))).sum());
+
+		// the latest few deals for the "recent deals" list
+		Map<Long, String> userNames = s.tenantUsers().stream().collect(Collectors.toMap(AppUser::getId, DashboardController::name));
+		Map<Long, String> productNames = products.findByTenantIdOrderByNameAsc(s.tenantId()).stream()
+				.collect(Collectors.toMap(Product::getId, Product::getName));
+		List<Activity> latest = sales.stream()
+				.sorted(java.util.Comparator.comparing(Activity::getActivityTime).reversed()).limit(6).toList();
+		Map<Long, String> customerNames = customers.findAllById(latest.stream().map(Activity::getCustomerId).toList())
+				.stream().collect(Collectors.toMap(Customer::getId, c -> c.getFirstName() + " " + c.getLastName()));
+		r.put("recentDeals", latest.stream().map(a -> {
+			Map<String, Object> m = new LinkedHashMap<>();
+			m.put("id", a.getId());
+			m.put("when", a.getActivityTime());
+			m.put("member", userNames.getOrDefault(a.getOwnerId(), ""));
+			m.put("customer", customerNames.getOrDefault(a.getCustomerId(), ""));
+			m.put("product", productNames.getOrDefault(a.getProductId(), ""));
+			m.put("units", a.getUnitsSold());
+			m.put("amount", a.getSaleAmount());
+			m.put("credit", a.getCreditAmount());
+			return m;
+		}).toList());
 		return r;
 	}
 

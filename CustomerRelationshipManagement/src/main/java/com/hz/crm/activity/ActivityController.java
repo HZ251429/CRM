@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.hz.crm.customer.CustomerRepository;
+import com.hz.crm.notification.Notification;
+import com.hz.crm.notification.NotificationService;
 import com.hz.crm.product.ProductRepository;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
@@ -22,9 +24,11 @@ public class ActivityController {
 	private final CustomerRepository customers;
 	private final AccessService access;
 	private final ProductRepository products;
+	private final NotificationService notifications;
 
 	public ActivityController(ActivityRepository repository, CustomerRepository customers, AccessService access,
-			ProductRepository products) {
+			ProductRepository products, NotificationService notifications) {
+		this.notifications = notifications;
 		this.products = products;
 		this.repository = repository;
 		this.customers = customers;
@@ -91,7 +95,36 @@ public class ActivityController {
 		}
 		activity.setTenantId(s.tenantId());
 		activity.setOwnerId(s.me().getId());
-		return repository.save(activity);
+		Activity saved = repository.save(activity);
+		notifyLeads(saved, s);
+		return saved;
+	}
+
+	private static final java.text.NumberFormat RUPEES = rupees();
+
+	private static java.text.NumberFormat rupees() {
+		java.text.NumberFormat f = java.text.NumberFormat.getCurrencyInstance(java.util.Locale.of("en", "IN"));
+		f.setMaximumFractionDigits(0);
+		return f;
+	}
+
+	/** e.g. "Rep One logged a visit with Big Buyer: Order #3 · sale of 10 pcs Purifier, ₹45,000" */
+	private void notifyLeads(Activity a, Scope s) {
+		String customer = customers.findById(a.getCustomerId()).map(c -> c.getFirstName() + " " + c.getLastName()).orElse("a customer");
+		String type = a.getType() == null ? "activity" : a.getType().toLowerCase(java.util.Locale.ROOT);
+		StringBuilder msg = new StringBuilder(s.me().getFullName()).append(" logged a ").append(type)
+				.append(" with ").append(customer).append(": ").append(a.getSubject());
+		if (a.getProductId() != null) {
+			products.findById(a.getProductId()).ifPresent(p -> {
+				msg.append(" · sale of ").append(a.getUnitsSold()).append(' ').append(p.getUnit()).append(' ').append(p.getName());
+				if (a.getSaleAmount() != null) {
+					synchronized (RUPEES) {
+						msg.append(", ").append(RUPEES.format(a.getSaleAmount()));
+					}
+				}
+			});
+		}
+		notifications.notifyLeads(s.tenantId(), s.me().getId(), Notification.Type.ACTIVITY_ADDED, msg.toString(), a.getId());
 	}
 
 	@PutMapping("/{id}")

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isLoggedIn, getUser, logout } from './api.js';
 import Logo from './Logo.jsx';
+import NotificationBell from './NotificationBell.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Customers from './pages/Customers.jsx';
@@ -31,6 +32,7 @@ const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', TENANT_ADMIN: 'Admin', MEMBER: 
 export default function App() {
   const [user, setUser] = useState(isLoggedIn() ? getUser() : null);
   const [tab, setTab] = useState(null);
+  const [pageKey, setPageKey] = useState(0); // bumped to reload a page, e.g. when opened from a notification
   const [theme, setTheme] = useState(
     localStorage.getItem('theme') ||
       (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
@@ -71,8 +73,13 @@ export default function App() {
         </div>
       </aside>
       <main className="content">
-        <h1 className="page-title">{current === 'Tenants' ? 'Tenant management' : current}</h1>
-        <Page key={current} user={user} />
+        <div className="page-top">
+          <h1 className="page-title">{current === 'Tenants' ? 'Tenant management' : current}</h1>
+          {user.role !== 'SUPER_ADMIN' && (
+            <NotificationBell onOpenTab={(t) => { setTab(t); setPageKey((k) => k + 1); }} />
+          )}
+        </div>
+        <Page key={`${current}-${pageKey}`} user={user} />
       </main>
     </div>
   );

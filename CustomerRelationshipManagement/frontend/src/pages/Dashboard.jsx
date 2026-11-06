@@ -4,7 +4,11 @@ import { money } from '../format.js';
 import Modal from '../Modal.jsx';
 import ActivityDetail, { PayBadge, fmtNum, fmtWhen } from '../ActivityDetail.jsx';
 import SalesChart from './SalesChart.jsx';
+import Icon from '../Icon.jsx';
 import { StatusChips, matchesStatus, balanceOf, teamBalanceOf, taskName } from '../TaskBits.jsx';
+
+/** whole rupees for the big dashboard figures (popups keep exact amounts) */
+const rupees = (n) => Number(n || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 
 const PERIODS = [['day', 'Today'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year']];
 const RANGES = [['week', 'Last 7 days'], ['month', 'Last 30 days'], ['year', 'Last 12 months']];
@@ -25,14 +29,17 @@ function Seg({ value, options, onChange, label }) {
   );
 }
 
-/** A dashboard tile that opens a details popup when clicked. */
-function Tile({ title, value, sub, onClick, small = false }) {
+/** A dashboard KPI tile with a coloured icon; opens a details popup when clicked. */
+function Kpi({ icon, tone, label, value, sub, onClick }) {
   return (
-    <button type="button" className={small ? 'card tile small-card' : 'card tile'} onClick={onClick}>
-      <h3>{title}</h3>
-      <p>{value}</p>
-      {sub && <span className="card-sub">{sub}</span>}
-      <span className="tile-more">View details →</span>
+    <button type="button" className="kpi" onClick={onClick}>
+      <span className={`icon-chip tone-${tone}`}><Icon name={icon} size={20} /></span>
+      <span className="kpi-body">
+        <span className="kpi-label">{label}</span>
+        <strong className="kpi-value">{value}</strong>
+        {sub && <span className="kpi-sub">{sub}</span>}
+      </span>
+      <Icon name="arrow" size={16} className="kpi-arrow" />
     </button>
   );
 }
@@ -107,6 +114,15 @@ export default function Dashboard({ user }) {
       return c ? `${c.firstName} ${c.lastName}${c.company ? ` · ${c.company}` : ''}` : `Customer #${id}`;
     };
     const memberName = (id) => (id === user.id ? `${names[id] || 'Me'} (me)` : names[id] || 'Unknown');
+
+    if (detail.kind === 'activityId') {
+      const a = data.activities.find((x) => x.id === detail.id);
+      if (!a) return <p className="muted">This deal is no longer available.</p>;
+      return (
+        <ActivityDetail a={a} memberName={memberName(a.ownerId)}
+          customerName={customerName(a.customerId)} product={productOf(a.productId)} />
+      );
+    }
 
     if (detail.kind === 'activity') {
       return (
@@ -215,76 +231,160 @@ export default function Dashboard({ user }) {
   const who = d ? (viewingSelf ? 'you' : d.userName) : '';
   const p = d?.deals[period];
   const periodLabel = PERIODS.find(([k]) => k === period)[1].toLowerCase();
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = (user.fullName || user.username || '').split(/[ @]/)[0];
+  const initials = (d?.userName || user.fullName || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const taskPct = d && d.unitsAssigned > 0 ? Math.min(100, Math.round((d.unitsSoldOnTasks / d.unitsAssigned) * 100)) : 0;
+  const tasksTitle = isAdminView ? 'Tasks assigned' : 'My tasks';
 
   return (
-    <div>
+    <div className="dash">
       {error && <p className="error">{error}</p>}
 
-      <div className="toolbar dash-bar">
-        {hasTeam && (
-          <label className="viewing-inline">Dashboard of
-            <select value={selected} onChange={(e) => setSelected(Number(e.target.value))}>
-              {team.map((t) => (
-                <option key={t.userId} value={t.userId}>{t.fullName}{t.userId === user.id ? ' (me)' : ''}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        {!viewingSelf && <button type="button" onClick={() => setSelected(user.id)}>Back to mine</button>}
-        <span className="spacer" />
-        {d && d.teamSize > 0 && (
-          <Seg label="Whose sales" value={scope} onChange={setScope}
-            options={[['me', viewingSelf ? 'Only me' : `Only ${d.userName}`], ['team', `With team (${d.teamSize})`]]} />
-        )}
-      </div>
+      <section className="dash-hero">
+        <div className="hero-who">
+          <span className="avatar" aria-hidden="true">{initials}</span>
+          <div>
+            <h2>{viewingSelf ? `${greeting}, ${firstName}` : `${d?.userName || ''}'s dashboard`}</h2>
+            <p className="muted">
+              <Icon name="calendar" size={15} /> {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              {d && <> · <Icon name={d.scope === 'team' ? 'users' : 'user'} size={15} /> {d.scope === 'team' ? `${who} + ${d.teamSize} team member${d.teamSize > 1 ? 's' : ''}` : `${who} only`}</>}
+            </p>
+          </div>
+        </div>
+        <div className="hero-controls">
+          {hasTeam && (
+            <label className="viewing-inline">
+              <Icon name="users" size={16} />
+              <select value={selected} onChange={(e) => setSelected(Number(e.target.value))} aria-label="Dashboard of">
+                {team.map((t) => (
+                  <option key={t.userId} value={t.userId}>{t.fullName}{t.userId === user.id ? ' (me)' : ''}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!viewingSelf && <button type="button" onClick={() => setSelected(user.id)}>Back to mine</button>}
+          {d && d.teamSize > 0 && (
+            <Seg label="Whose sales" value={scope} onChange={setScope}
+              options={[['me', viewingSelf ? 'Only me' : `Only ${d.userName.split(' ')[0]}`], ['team', `With team (${d.teamSize})`]]} />
+          )}
+        </div>
+      </section>
 
       {!d ? (!error && <p className="muted">Loading...</p>) : (
         <>
-          <p className="muted rollup">
-            Tasks are {viewingSelf ? 'your' : `${d.userName}'s`} own.
-            {' '}Sales show {d.scope === 'team' ? `${who} and ${d.teamSize} team member${d.teamSize > 1 ? 's' : ''}` : `${who} only`}.
-            {' '}Click any tile for details.
-          </p>
-
-          <div className="cards">
-            <Tile title={isAdminView ? 'Tasks assigned' : 'Total tasks'} value={fmtNum(d.totalTasks)}
+          <div className="kpi-grid">
+            <Kpi icon="target" tone="indigo" label={isAdminView ? 'Tasks assigned' : 'Total tasks'} value={fmtNum(d.totalTasks)}
               sub={`${fmtNum(d.completedTasks)} completed`}
-              onClick={() => openDetail({ kind: 'tasks', filter: 'all', status: '', title: isAdminView ? 'Tasks assigned' : 'My tasks' })} />
-            <Tile title="Open tasks" value={fmtNum(d.openTasks)} sub="not yet completed"
-              onClick={() => openDetail({ kind: 'tasks', filter: 'all', status: 'OPEN', title: isAdminView ? 'Tasks assigned' : 'My tasks' })} />
-            <Tile title="Units balance" value={fmtNum(d.unitsBalance)} sub={d.unitsSplit > 0 ? `of ${fmtNum(d.unitsAssigned)} assigned · ${fmtNum(d.unitsSplit)} handed to team` : `still to sell, of ${fmtNum(d.unitsAssigned)} assigned`}
+              onClick={() => openDetail({ kind: 'tasks', filter: 'all', status: '', title: tasksTitle })} />
+            <Kpi icon="clock" tone="amber" label="Open tasks" value={fmtNum(d.openTasks)} sub="not yet completed"
+              onClick={() => openDetail({ kind: 'tasks', filter: 'all', status: 'OPEN', title: tasksTitle })} />
+            <Kpi icon="box" tone="sky" label="Units balance" value={fmtNum(d.unitsBalance)}
+              sub={d.unitsSplit > 0 ? `${fmtNum(d.unitsSplit)} handed to team` : `of ${fmtNum(d.unitsAssigned)} assigned`}
               onClick={() => openDetail({ kind: 'tasks', filter: 'balance', title: 'Units balance by task' })} />
-            <Tile title="Units sold" value={fmtNum(d.unitsSold)} sub={`${money(d.salesAmount)} in sales`}
+            <Kpi icon="cart" tone="emerald" label="Units sold" value={fmtNum(d.unitsSold)} sub={`${rupees(d.salesAmount)} in sales`}
               onClick={() => openDetail({ kind: 'deals', title: 'All deals' })} />
-            <Tile title="On credit" value={money(d.creditOutstanding)} sub="still to be collected"
+            <Kpi icon="card" tone="rose" label="On credit" value={rupees(d.creditOutstanding)} sub="still to collect"
               onClick={() => openDetail({ kind: 'deals', creditOnly: true, title: 'Deals with credit outstanding' })} />
           </div>
 
-          <div className="panel">
-            <div className="panel-head">
-              <h3>Deals closed</h3>
-              <Seg label="Period" value={period} onChange={setPeriod} options={PERIODS} />
-            </div>
-            <div className="cards period-cards">
-              <Tile small title="Deals" value={fmtNum(p.deals)} sub={periodLabel}
-                onClick={() => openDetail({ kind: 'deals', from: periodStart(period), title: `Deals closed ${periodLabel}` })} />
-              <Tile small title="Sales amount" value={money(p.amount)} sub={periodLabel}
-                onClick={() => openDetail({ kind: 'deals', from: periodStart(period), title: `Deals closed ${periodLabel}` })} />
-              <Tile small title="Units sold" value={fmtNum(p.units)} sub={periodLabel}
-                onClick={() => openDetail({ kind: 'deals', from: periodStart(period), title: `Deals closed ${periodLabel}` })} />
-            </div>
+          <div className="dash-grid">
+            <section className="panel">
+              <div className="panel-head">
+                <h3 className="with-icon"><span className="icon-chip tone-indigo"><Icon name="chart" size={18} /></span> Sales</h3>
+                <div className="panel-controls">
+                  <Seg label="Measure" value={metric} onChange={setMetric} options={[['amount', '₹ Amount'], ['units', 'Units']]} />
+                  <Seg label="Range" value={range} onChange={setRange} options={RANGES} />
+                </div>
+              </div>
+              <SalesChart points={d.series[range]} metric={metric} period={range}
+                onBarClick={(pt, label) => openDetail({ kind: 'deals', keyPrefix: pt.key, title: `Deals on ${label}` })} />
+            </section>
+
+            <section className="panel">
+              <div className="panel-head">
+                <h3 className="with-icon"><span className="icon-chip tone-emerald"><Icon name="handshake" size={18} /></span> Deals closed</h3>
+              </div>
+              <Seg label="Period" value={period} onChange={setPeriod} options={PERIODS.map(([k, l]) => [k, l.replace('This ', '')])} />
+              <div className="stat-rows">
+                {[
+                  ['handshake', 'Deals', fmtNum(p.deals)],
+                  ['rupee', 'Sales amount', rupees(p.amount)],
+                  ['box', 'Units sold', fmtNum(p.units)],
+                ].map(([icon, label, value]) => (
+                  <button key={label} type="button" className="stat-row"
+                    onClick={() => openDetail({ kind: 'deals', from: periodStart(period), title: `Deals closed ${periodLabel}` })}>
+                    <Icon name={icon} size={18} />
+                    <span className="muted">{label}</span>
+                    <strong>{value}</strong>
+                    <Icon name="arrow" size={16} className="row-arrow" />
+                  </button>
+                ))}
+              </div>
+              <p className="muted small left period-note">For {periodLabel}. Click a row to see the deals.</p>
+            </section>
           </div>
 
-          <div className="panel">
-            <div className="panel-head">
-              <h3>Sales</h3>
-              <div className="panel-controls">
-                <Seg label="Measure" value={metric} onChange={setMetric} options={[['amount', 'Amount'], ['units', 'Units']]} />
-                <Seg label="Range" value={range} onChange={setRange} options={RANGES} />
+          <div className="dash-grid">
+            <section className="panel">
+              <div className="panel-head">
+                <h3 className="with-icon"><span className="icon-chip tone-amber"><Icon name="target" size={18} /></span> Task progress</h3>
               </div>
-            </div>
-            <SalesChart points={d.series[range]} metric={metric} period={range}
-              onBarClick={(pt, label) => openDetail({ kind: 'deals', keyPrefix: pt.key, title: `Deals on ${label}` })} />
+              {d.totalTasks === 0 ? <p className="muted">{isAdminView ? 'You have not created any tasks yet.' : 'No tasks assigned yet.'}</p> : (
+                <>
+                  <div className="progress-hero">
+                    <strong>{taskPct}%</strong>
+                    <span className="muted">of {fmtNum(d.unitsAssigned)} units sold</span>
+                  </div>
+                  <div className={taskPct >= 100 ? 'progress done big' : 'progress big'} role="progressbar"
+                    aria-valuenow={taskPct} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${taskPct}%` }} /></div>
+                  <div className="stat-rows">
+                    {[
+                      ['pause', 'Not started', 'NOT_STARTED'],
+                      ['play', 'In progress', 'IN_PROGRESS'],
+                      ['check', 'Completed', 'COMPLETED'],
+                    ].map(([icon, label, st]) => (
+                      <button key={st} type="button" className={`stat-row st-${st.toLowerCase()}`}
+                        onClick={() => openDetail({ kind: 'tasks', filter: 'all', status: st, title: tasksTitle })}>
+                        <Icon name={icon} size={18} />
+                        <span className="muted">{label}</span>
+                        <strong>{fmtNum(d.taskStatus?.[st])}</strong>
+                        <Icon name="arrow" size={16} className="row-arrow" />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+
+            <section className="panel">
+              <div className="panel-head">
+                <h3 className="with-icon"><span className="icon-chip tone-sky"><Icon name="trend" size={18} /></span> Recent deals</h3>
+                {d.recentDeals?.length > 0 && (
+                  <button type="button" className="link" onClick={() => openDetail({ kind: 'deals', title: 'All deals' })}>View all</button>
+                )}
+              </div>
+              {!d.recentDeals?.length ? <p className="muted">No deals yet.</p> : (
+                <ul className="recent-list">
+                  {d.recentDeals.map((r) => (
+                    <li key={r.id}>
+                      <button type="button" onClick={() => openDetail({ kind: 'activityId', id: r.id, title: 'Deal details' })}>
+                        <span className="icon-chip tone-emerald small"><Icon name="cart" size={16} /></span>
+                        <span className="recent-main">
+                          <strong>{r.customer}</strong>
+                          <span className="muted">{r.product} · {fmtNum(r.units)} units{d.scope === 'team' ? ` · ${r.member}` : ''}</span>
+                        </span>
+                        <span className="recent-amt">
+                          <strong>{r.amount != null ? rupees(r.amount) : '—'}</strong>
+                          <span className="muted">{Number(r.credit) > 0 ? `${money(r.credit)} credit` : fmtWhen(r.when)}</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
         </>
       )}

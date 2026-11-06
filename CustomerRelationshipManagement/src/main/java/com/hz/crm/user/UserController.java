@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.hz.crm.notification.Notification;
+import com.hz.crm.notification.NotificationService;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
 import com.hz.crm.security.SessionService;
@@ -51,9 +53,11 @@ public class UserController {
 	private final TenantRepository tenants;
 	private final TeamRoleRepository teamRoles;
 	private final SessionService sessions;
+	private final NotificationService notifications;
 
 	public UserController(AppUserRepository users, PasswordEncoder encoder, AccessService access,
-			TenantRepository tenants, TeamRoleRepository teamRoles, SessionService sessions) {
+			TenantRepository tenants, TeamRoleRepository teamRoles, SessionService sessions, NotificationService notifications) {
+		this.notifications = notifications;
 		this.sessions = sessions;
 		this.users = users;
 		this.encoder = encoder;
@@ -130,7 +134,13 @@ public class UserController {
 		u.setTenantId(s.tenantId());
 		u.setManagerId(managerId);
 		u.setTeamRoleId(req.teamRoleId());
-		return view(users.save(u), roleNames(s.tenantId()));
+		AppUser saved = users.save(u);
+		notifications.notifyLeads(s.tenantId(), s.me().getId(), Notification.Type.MEMBER_ADDED,
+				s.me().getFullName() + " added " + saved.getFullName() + " to the team" + (saved.getManagerId() != null
+						&& !saved.getManagerId().equals(s.me().getId()) ? " (under " + s.tenantUsers().stream()
+								.filter(x -> x.getId().equals(saved.getManagerId())).map(AppUser::getFullName).findFirst().orElse("") + ")" : ""),
+				saved.getId());
+		return view(saved, roleNames(s.tenantId()));
 	}
 
 	@PutMapping("/{id}")

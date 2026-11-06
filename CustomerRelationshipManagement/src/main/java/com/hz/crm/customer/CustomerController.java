@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
 import com.hz.crm.activity.ActivityRepository;
 import com.hz.crm.common.PageResult;
 import com.hz.crm.deal.DealRepository;
+import com.hz.crm.notification.Notification;
+import com.hz.crm.notification.NotificationService;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
 
@@ -34,8 +36,11 @@ public class CustomerController {
 	private final ActivityRepository activityRepository;
 	private final AccessService access;
 
+	private final NotificationService notifications;
+
 	public CustomerController(CustomerRepository repository, DealRepository dealRepository,
-			ActivityRepository activityRepository, AccessService access) {
+			ActivityRepository activityRepository, AccessService access, NotificationService notifications) {
+		this.notifications = notifications;
 		this.repository = repository;
 		this.dealRepository = dealRepository;
 		this.activityRepository = activityRepository;
@@ -79,7 +84,12 @@ public class CustomerController {
 		customer.setId(null);
 		customer.setTenantId(s.tenantId());
 		customer.setOwnerId(s.me().getId());
-		return repository.save(customer);
+		Customer saved = repository.save(customer);
+		notifications.notifyLeads(s.tenantId(), s.me().getId(), Notification.Type.CUSTOMER_ADDED,
+				s.me().getFullName() + " added a new customer: " + saved.getFirstName() + " " + saved.getLastName()
+						+ (saved.getCompany() == null || saved.getCompany().isBlank() ? "" : " (" + saved.getCompany() + ")"),
+				saved.getId());
+		return saved;
 	}
 
 	@PutMapping("/{id}")
