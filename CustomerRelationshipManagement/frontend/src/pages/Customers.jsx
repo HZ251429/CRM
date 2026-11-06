@@ -1,31 +1,55 @@
 import { useEffect, useState } from 'react';
-import { customersApi } from '../api.js';
-import { useOwners } from '../format.js';
+import { activitiesApi, customersApi } from '../api.js';
+import { money, useOwners } from '../format.js';
 import Modal, { Field, ConfirmDialog } from '../Modal.jsx';
+import { PayBadge, fmtNum, fmtWhen, typeOf } from '../ActivityDetail.jsx';
 
-const empty = { firstName: '', lastName: '', email: '', phone: '', company: '', status: 'LEAD' };
-const STATUSES = ['LEAD', 'PROSPECT', 'CUSTOMER', 'INACTIVE'];
+const empty = { firstName: '', lastName: '', email: '', phone: '', company: '' };
 
-export default function Customers() {
+/** Customers as a short list; click a row for contact details and the customer's activity history. */
+export default function Customers({ user }) {
   const [data, setData] = useState({ content: [], page: 0, totalPages: 0, totalElements: 0 });
+  const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
   const [page, setPage] = useState(0);
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const [activities, setActivities] = useState([]);
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
   const [toDelete, setToDelete] = useState(null);
   const { names, multi, team } = useOwners();
 
-  const load = () => customersApi.search(q, page, 10, ownerFilter).then(setData).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, [q, page, ownerFilter]);
+  const load = () => customersApi.search(q, page, 15, ownerFilter)
+    .then((r) => { setData(r); setLoaded(true); }).catch((e) => setError(e.message));
+  const loadActivities = () => activitiesApi.list().then(setActivities).catch(() => {});
+  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [q, page, ownerFilter]);
+  useEffect(() => { loadActivities(); }, []);
+
+  // activity summary per customer: count, last contact, sales and credit
+  const stats = {};
+  activities.forEach((a) => {
+    const s = stats[a.customerId] || (stats[a.customerId] = { count: 0, last: null, sales: 0, credit: 0, deals: 0, list: [] });
+    s.count += 1;
+    s.list.push(a);
+    if (!s.last || String(a.activityTime) > String(s.last)) s.last = a.activityTime;
+    if (a.productId) { s.deals += 1; s.sales += Number(a.saleAmount || 0); s.credit += Number(a.creditAmount || 0); }
+  });
+  const statsOf = (id) => stats[id] || { count: 0, last: null, sales: 0, credit: 0, deals: 0, list: [] };
+  const ownerName = (id) => (id === user.id ? `${names[id] || 'Me'} (me)` : names[id] || '');
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
-
   const openAdd = () => { setEditingId(null); setForm(empty); setFormError(''); setOpen(true); };
-  const openEdit = (c) => { setEditingId(c.id); setForm({ ...empty, ...c }); setFormError(''); setOpen(true); };
+  const openEdit = (c) => {
+    setViewing(null);
+    setEditingId(c.id);
+    setForm({ firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone || '', company: c.company || '' });
+    setFormError('');
+    setOpen(true);
+  };
   const close = () => setOpen(false);
 
   const submit = async (e) => {
@@ -44,26 +68,31 @@ export default function Customers() {
   const remove = async () => {
     const c = toDelete;
     setToDelete(null);
+    setViewing(null);
     try {
       await customersApi.remove(c.id);
       load();
+      loadActivities();
     } catch (err) {
       setError(err.message);
     }
   };
+
+  const cols = multi ? 5 : 4;
+  const v = viewing ? statsOf(viewing.id) : null;
 
   return (
     <div>
       {error && <p className="error">{error}</p>}
 
       <div className="toolbar">
-        <input className="search" placeholder="Filter by customer name, email, company..." value={q}
+        <input className="search" placeholder="Search name, email, company..." value={q}
           onChange={(e) => { setPage(0); setQ(e.target.value); }} />
         {multi && (
           <select className="filter-select" value={ownerFilter} onChange={(e) => { setPage(0); setOwnerFilter(e.target.value); }}
             title="Filter by owner">
             <option value="">All owners</option>
-            {team.map((t) => <option key={t.userId} value={t.userId}>{t.fullName}</option>)}
+            {team.map((t) => <option key={t.userId} value={t.userId}>{t.userId === user.id ? `${t.fullName} (me)` : t.fullName}</option>)}
           </select>
         )}
         {(q || ownerFilter) && (
@@ -72,33 +101,95 @@ export default function Customers() {
         <button type="button" className="primary" onClick={openAdd}>+ Add customer</button>
       </div>
 
-      <table>
-        <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Company</th><th>Status</th>{multi && <th>Owner</th>}<th></th></tr></thead>
-        <tbody>
-          {data.content.map((c) => (
-            <tr key={c.id}>
-              <td>{c.firstName} {c.lastName}</td><td>{c.email}</td><td>{c.phone}</td>
-              <td>{c.company}</td><td>{c.status}</td>
-              {multi && <td>{names[c.ownerId]}</td>}
-              <td>
-                <button onClick={() => openEdit(c)}>Edit</button>
-                <button onClick={() => setToDelete(c)}>Delete</button>
-              </td>
-            </tr>
-          ))}
-          {data.content.length === 0 && <tr><td colSpan="7" className="muted">No customers found</td></tr>}
-        </tbody>
-      </table>
-
-      <div className="pager">
-        <button disabled={page === 0} onClick={() => setPage(page - 1)}>Prev</button>
-        <span>Page {data.totalPages === 0 ? 0 : data.page + 1} of {data.totalPages} ({data.totalElements} total)</span>
-        <button disabled={page + 1 >= data.totalPages} onClick={() => setPage(page + 1)}>Next</button>
+      <div className="table-scroll">
+        <table className="act-table">
+          <thead>
+            <tr><th>Customer</th><th>Contact</th>{multi && <th>Owner</th>}<th>Last activity</th><th className="num">Sales</th></tr>
+          </thead>
+          <tbody>
+            {data.content.map((c) => {
+              const s = statsOf(c.id);
+              return (
+                <tr key={c.id} className="clickable" tabIndex={0} onClick={() => setViewing(c)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setViewing(c); } }}>
+                  <td className="two-line">
+                    <strong>{c.firstName} {c.lastName}</strong>
+                    <span className="muted">{c.company || '—'}</span>
+                  </td>
+                  <td className="two-line">
+                    <span>{c.email}</span>
+                    <span className="muted">{c.phone || '—'}</span>
+                  </td>
+                  {multi && <td><span className={c.ownerId === user.id ? 'member-chip me' : 'member-chip'}>{ownerName(c.ownerId)}</span></td>}
+                  <td className="two-line">
+                    <span>{s.last ? fmtWhen(s.last) : <span className="muted">No activity yet</span>}</span>
+                    <span className="muted">{s.count > 0 ? `${s.count} activit${s.count === 1 ? 'y' : 'ies'}` : ''}</span>
+                  </td>
+                  <td className="num two-line">
+                    <strong>{s.deals > 0 ? money(s.sales) : <span className="muted">—</span>}</strong>
+                    {s.credit > 0 && <span className="pay-badge credit">⏳ {money(s.credit)} credit</span>}
+                  </td>
+                </tr>
+              );
+            })}
+            {loaded && data.content.length === 0 && (
+              <tr><td colSpan={cols} className="muted">{q || ownerFilter ? 'No customers match.' : 'No customers yet. Use "+ Add customer".'}</td></tr>
+            )}
+            {!loaded && !error && <tr><td colSpan={cols} className="muted">Loading...</td></tr>}
+          </tbody>
+        </table>
       </div>
+
+      {data.totalPages > 1 && (
+        <div className="pager">
+          <button disabled={page === 0} onClick={() => setPage(page - 1)}>Prev</button>
+          <span>Page {data.page + 1} of {data.totalPages} ({fmtNum(data.totalElements)} customers)</span>
+          <button disabled={page + 1 >= data.totalPages} onClick={() => setPage(page + 1)}>Next</button>
+        </div>
+      )}
+      {data.totalPages <= 1 && data.totalElements > 0 && <p className="muted hint">{fmtNum(data.totalElements)} customers</p>}
+
+      {viewing && (
+        <Modal wide title={`${viewing.firstName} ${viewing.lastName}`} onClose={() => setViewing(null)}>
+          <dl className="detail-grid">
+            <dt>Company</dt><dd>{viewing.company || '—'}</dd>
+            <dt>Email</dt><dd><a href={`mailto:${viewing.email}`}>{viewing.email}</a></dd>
+            <dt>Phone</dt><dd>{viewing.phone ? <a href={`tel:${viewing.phone}`}>{viewing.phone}</a> : '—'}</dd>
+            {multi && (<><dt>Owner</dt><dd><span className="member-chip">{ownerName(viewing.ownerId)}</span></dd></>)}
+            <dt>Added</dt><dd>{viewing.createdAt ? fmtWhen(viewing.createdAt, true) : '—'}</dd>
+          </dl>
+          <div className="detail-sale">
+            <div><span className="muted">Activities</span><strong>{v.count}</strong></div>
+            <div><span className="muted">Deals</span><strong>{v.deals}</strong></div>
+            <div><span className="muted">Sales</span><strong>{money(v.sales)}</strong></div>
+            <div><span className="muted">On credit</span><strong className={v.credit > 0 ? 'credit-text' : ''}>{money(v.credit)}</strong></div>
+          </div>
+          <h4 className="detail-label">Recent activities</h4>
+          {v.list.length === 0 ? <p className="muted">Nothing logged with this customer yet.</p> : (
+            <ul className="mini-list">
+              {[...v.list].sort((a, b) => String(b.activityTime).localeCompare(String(a.activityTime))).slice(0, 8).map((a) => (
+                <li key={a.id}>
+                  <span className="nowrap muted">{fmtWhen(a.activityTime)}</span>
+                  <span className="mini-title"><span aria-hidden="true">{typeOf(a.type).icon}</span> {a.subject}</span>
+                  {multi ? <span className="member-chip">{ownerName(a.ownerId)}</span> : <span />}
+                  {a.productId ? <span className="mini-sale">{a.saleAmount != null ? money(a.saleAmount) : ''} <PayBadge a={a} /></span> : <span />}
+                </li>
+              ))}
+            </ul>
+          )}
+          {v.list.length > 8 && <p className="muted hint">Showing the latest 8 of {v.count}. See all on the Activities page.</p>}
+          <div className="modal-actions">
+            <button type="button" className="danger-outline" onClick={() => setToDelete(viewing)}>Delete</button>
+            <span className="spacer" />
+            <button type="button" onClick={() => setViewing(null)}>Close</button>
+            <button type="button" className="primary" onClick={() => openEdit(viewing)}>Edit</button>
+          </div>
+        </Modal>
+      )}
 
       {toDelete && (
         <ConfirmDialog
-          message={`Delete ${toDelete.firstName} ${toDelete.lastName}? All of this customer's deals and activities will be deleted too. This cannot be undone.`}
+          message={`Delete ${toDelete.firstName} ${toDelete.lastName}? All of this customer's activities and recorded sales will be deleted too. This cannot be undone.`}
           onConfirm={remove} onCancel={() => setToDelete(null)} />
       )}
 
@@ -110,17 +201,12 @@ export default function Customers() {
               <Field label="First name"><input name="firstName" value={form.firstName} onChange={onChange} required autoFocus /></Field>
               <Field label="Last name"><input name="lastName" value={form.lastName} onChange={onChange} required /></Field>
               <Field label="Email"><input name="email" type="email" value={form.email} onChange={onChange} required /></Field>
-              <Field label="Phone"><input name="phone" value={form.phone || ''} onChange={onChange} /></Field>
-              <Field label="Company"><input name="company" value={form.company || ''} onChange={onChange} /></Field>
-              <Field label="Status">
-                <select name="status" value={form.status} onChange={onChange}>
-                  {STATUSES.map((s) => <option key={s}>{s}</option>)}
-                </select>
-              </Field>
+              <Field label="Phone"><input name="phone" value={form.phone} onChange={onChange} /></Field>
+              <Field label="Company" wide><input name="company" value={form.company} onChange={onChange} /></Field>
             </div>
             <div className="modal-actions">
               <button type="button" onClick={close}>Cancel</button>
-              <button type="submit" className="primary">{editingId ? 'Update' : 'Add customer'}</button>
+              <button type="submit" className="primary">{editingId ? 'Save changes' : 'Add customer'}</button>
             </div>
           </form>
         </Modal>

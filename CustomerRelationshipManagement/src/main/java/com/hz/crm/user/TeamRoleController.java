@@ -46,6 +46,14 @@ public class TeamRoleController {
 		return new RoleView(r.getId(), r.getName(), count);
 	}
 
+	private Scope adminScope() {
+		Scope s = access.scope();
+		if (s.me().getRole() != Role.TENANT_ADMIN) {
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the admin can manage roles");
+		}
+		return s;
+	}
+
 	private TeamRole find(Long id, Scope s) {
 		return roles.findById(id).filter(r -> s.tenantId().equals(r.getTenantId()))
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
@@ -53,14 +61,14 @@ public class TeamRoleController {
 
 	@GetMapping
 	public List<RoleView> list() {
-		Scope s = access.scope();
+		Scope s = access.scope(); // everyone may read the roles, e.g. to pick one for a new team member
 		return roles.findByTenantIdOrderByNameAsc(s.tenantId()).stream().map(r -> view(r, s)).toList();
 	}
 
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
 	public RoleView create(@Valid @RequestBody RoleRequest req) {
-		Scope s = access.scope();
+		Scope s = adminScope();
 		String name = req.name().trim();
 		if (roles.existsByTenantIdAndNameIgnoreCase(s.tenantId(), name)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT, "Role already exists");
@@ -73,7 +81,7 @@ public class TeamRoleController {
 
 	@PutMapping("/{id}")
 	public RoleView rename(@PathVariable Long id, @Valid @RequestBody RoleRequest req) {
-		Scope s = access.scope();
+		Scope s = adminScope();
 		TeamRole r = find(id, s);
 		String name = req.name().trim();
 		if (!r.getName().equalsIgnoreCase(name) && roles.existsByTenantIdAndNameIgnoreCase(s.tenantId(), name)) {
@@ -85,7 +93,7 @@ public class TeamRoleController {
 
 	@DeleteMapping("/{id}")
 	public ResponseEntity<Void> delete(@PathVariable Long id) {
-		Scope s = access.scope();
+		Scope s = adminScope();
 		TeamRole r = find(id, s);
 		if (view(r, s).memberCount() > 0) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT,

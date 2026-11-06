@@ -32,7 +32,6 @@ public class Customer {
 
 	private String phone;
 	private String company;
-	private String status = "LEAD";
 	private LocalDateTime createdAt;
 
 	private Long tenantId;
@@ -59,7 +58,5 @@ public class Customer {
 	public void setPhone(String phone) { this.phone = phone; }
 	public String getCompany() { return company; }
 	public void setCompany(String company) { this.company = company; }
-	public String getStatus() { return status; }
-	public void setStatus(String status) { this.status = status; }
 	public LocalDateTime getCreatedAt() { return createdAt; }
 }

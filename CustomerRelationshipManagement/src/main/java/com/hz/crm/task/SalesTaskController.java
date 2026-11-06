@@ -29,6 +29,7 @@ import com.hz.crm.product.Product;
 import com.hz.crm.product.ProductRepository;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
+import com.hz.crm.task.TaskProgressService.Status;
 import com.hz.crm.user.AppUser;
 import com.hz.crm.user.Role;
 
@@ -46,11 +47,11 @@ import jakarta.validation.constraints.Size;
 @RequestMapping("/api/tasks")
 public class SalesTaskController {
 
-	public enum Status { NOT_STARTED, IN_PROGRESS, COMPLETED }
-
 	public record TaskView(Long id, Long parentId, String title, Long productId, String productName, String unit,
 			int units, Long assignedToId, String assignedToName, Long assignedById, String assignedByName,
-			LocalDateTime createdAt, int splitUnits, int subTaskCount, long soldUnits, Status status) {
+			LocalDateTime createdAt, int splitUnits, int subTaskCount, long soldUnits, Status status,
+			/** units of the whole task still unsold (team included) */ long teamBalance,
+			/** units still to be sold by the assignee themselves, after units split to the team */ long ownBalance) {
 	}
 
 	public record CreateTaskRequest(Long parentId, Long productId, @NotNull Long assigneeId,
@@ -64,9 +65,11 @@ public class SalesTaskController {
 	private final ProductRepository products;
 	private final ActivityRepository activities;
 	private final AccessService access;
+	private final TaskProgressService progress;
 
 	public SalesTaskController(SalesTaskRepository tasks, ProductRepository products, ActivityRepository activities,
-			AccessService access) {
+			AccessService access, TaskProgressService progress) {
+		this.progress = progress;
 		this.tasks = tasks;
 		this.products = products;
 		this.activities = activities;
@@ -93,72 +96,22 @@ public class SalesTaskController {
 				.collect(Collectors.toMap(Product::getId, Function.identity()));
 		Map<Long, List<SalesTask>> children = all.stream().filter(t -> t.getParentId() != null)
 				.collect(Collectors.groupingBy(SalesTask::getParentId));
-		Map<Long, Long> soldByTask = allocate(s, all,
+		Map<Long, Long> soldByTask = progress.soldByTask(s, all,
 				activities.findByTenantIdAndProductIdIsNotNull(s.tenantId()));
+		Map<Long, Long> own = progress.ownBalance(all, soldByTask);
 
 		return selected.stream().map(t -> {
 			long sold = soldByTask.getOrDefault(t.getId(), 0L);
 			List<SalesTask> kids = children.getOrDefault(t.getId(), List.of());
 			Product p = productById.get(t.getProductId());
-			Status status = sold >= t.getUnits() ? Status.COMPLETED : sold > 0 ? Status.IN_PROGRESS : Status.NOT_STARTED;
+			Status status = TaskProgressService.status(t, sold);
 			return new TaskView(t.getId(), t.getParentId(), t.getTitle(), t.getProductId(),
 					p == null ? "?" : p.getName(), p == null ? "units" : p.getUnit(), t.getUnits(),
 					t.getAssignedToId(), name(users.get(t.getAssignedToId())), t.getAssignedById(),
 					name(users.get(t.getAssignedById())), t.getCreatedAt(),
-					kids.stream().mapToInt(SalesTask::getUnits).sum(), kids.size(), sold, status);
+					kids.stream().mapToInt(SalesTask::getUnits).sum(), kids.size(), sold, status,
+					Math.max(0, t.getUnits() - sold), own.getOrDefault(t.getId(), 0L));
 		}).toList();
-	}
-
-	/** Sales count from the start of the day the task was assigned. */
-	private static LocalDateTime countsFrom(SalesTask t) {
-		return t.getCreatedAt().toLocalDate().atStartOfDay();
-	}
-
-	/**
-	 * Units sold per task. Sales by a person and everyone below them count toward that person's tasks for the
-	 * product, but each sale is counted only once per person: it fills their oldest unfinished task first and the
-	 * rest flows to the next one. A sale only counts toward tasks that existed on the day of the sale. Units sold
-	 * beyond all targets are added to the newest task the sale could count toward, so over-achievement stays visible.
-	 * Parent and sub-tasks belong to different people, so a leader's task still rolls up the team's sales.
-	 */
-	private Map<Long, Long> allocate(Scope s, List<SalesTask> all, List<Activity> sales) {
-		Map<Long, Long> sold = new HashMap<>();
-		Map<String, List<SalesTask>> byPersonAndProduct = all.stream()
-				.collect(Collectors.groupingBy(t -> t.getAssignedToId() + ":" + t.getProductId()));
-		Comparator<SalesTask> oldestFirst = Comparator.comparing(SalesTask::getCreatedAt).thenComparing(SalesTask::getId);
-
-		for (List<SalesTask> group : byPersonAndProduct.values()) {
-			List<SalesTask> ordered = group.stream().sorted(oldestFirst).toList();
-			ordered.forEach(t -> sold.put(t.getId(), 0L));
-			Long productId = ordered.get(0).getProductId();
-			Set<Long> team = access.subtree(ordered.get(0).getAssignedToId(), s.tenantUsers());
-			List<Activity> stream = sales.stream()
-					.filter(a -> productId.equals(a.getProductId()) && team.contains(a.getOwnerId())
-							&& a.getActivityTime() != null && a.getUnitsSold() != null)
-					.sorted(Comparator.comparing(Activity::getActivityTime).thenComparing(Activity::getId))
-					.toList();
-
-			for (Activity a : stream) {
-				long left = a.getUnitsSold();
-				SalesTask newestEligible = null;
-				for (SalesTask t : ordered) {
-					if (a.getActivityTime().isBefore(countsFrom(t))) {
-						break; // this and all newer tasks did not exist yet on the day of the sale
-					}
-					newestEligible = t;
-					long room = t.getUnits() - sold.get(t.getId());
-					if (room > 0 && left > 0) {
-						long take = Math.min(room, left);
-						sold.merge(t.getId(), take, Long::sum);
-						left -= take;
-					}
-				}
-				if (left > 0 && newestEligible != null) {
-					sold.merge(newestEligible.getId(), left, Long::sum);
-				}
-			}
-		}
-		return sold;
 	}
 
 	private static String name(AppUser u) {
@@ -221,6 +174,9 @@ public class SalesTaskController {
 				t.setTitle(parent.getTitle());
 			}
 		} else {
+			if (t.getTitle() == null) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a title for the task");
+			}
 			if (req.productId() == null) {
 				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose a product");
 			}
@@ -255,7 +211,14 @@ public class SalesTaskController {
 			}
 		}
 		t.setUnits(req.units());
-		t.setTitle(title(req.title()));
+		String newTitle = title(req.title());
+		if (newTitle == null) {
+			if (t.getParentId() == null) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a title for the task");
+			}
+			newTitle = tasks.findById(t.getParentId()).map(SalesTask::getTitle).orElse(null); // sub-task: same as its task
+		}
+		t.setTitle(newTitle);
 		return view(s, tasks.save(t));
 	}
 

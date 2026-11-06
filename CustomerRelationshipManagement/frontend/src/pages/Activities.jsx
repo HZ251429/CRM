@@ -1,61 +1,29 @@
 import { useEffect, useState } from 'react';
 import { customersApi, activitiesApi, productsApi } from '../api.js';
-import { nowLocalInput, toLocalInput, useOwners } from '../format.js';
+import { money, nowLocalInput, toLocalInput, useOwners } from '../format.js';
 import Modal, { Field, ConfirmDialog } from '../Modal.jsx';
+import ActivityDetail, { TYPES, typeOf, PayBadge, fmtWhen, fmtNum } from '../ActivityDetail.jsx';
 
-/** Kinds of log entries. TASK only exists on older entries and is not offered for new ones. */
-const TYPES = {
-  MEETING: { label: 'Meeting', icon: '🤝' },
-  CALL: { label: 'Call', icon: '📞' },
-  VISIT: { label: 'Visit', icon: '📍' },
-  EMAIL: { label: 'Email', icon: '✉️' },
-  NOTE: { label: 'Note', icon: '📝' },
-  TASK: { label: 'Task', icon: '✅', legacy: true },
-};
 const PICKABLE = Object.keys(TYPES).filter((t) => !TYPES[t].legacy);
-const typeOf = (t) => TYPES[t] || { label: t, icon: '•' };
+const PAGE = 50;
 
-const empty = { customerId: '', type: 'MEETING', subject: '', attendees: '', notes: '', outcome: '', activityTime: '', productId: '', unitsSold: '' };
+const empty = {
+  customerId: '', type: 'MEETING', subject: '', attendees: '', notes: '', outcome: '', activityTime: '',
+  isSale: false, productId: '', unitsSold: '', saleAmount: '', fullyPaid: true, amountPaid: '',
+};
 
 const dayKey = (t) => (t ? String(t).slice(0, 10) : '');
-const pad = (n) => String(n).padStart(2, '0');
-const isoDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-function dayLabel(key) {
-  if (!key) return 'No date';
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (key === isoDay(today)) return 'Today';
-  if (key === isoDay(yesterday)) return 'Yesterday';
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-const timeLabel = (t) => {
-  const d = new Date(t);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-};
-
-/** Notes can be long: show the first few lines, with a toggle for the rest. */
-function LongText({ text }) {
-  const [more, setMore] = useState(false);
-  const long = text.length > 320 || text.split('\n').length > 5;
-  return (
-    <>
-      <p className={long && !more ? 'log-text clamped' : 'log-text'}>{text}</p>
-      {long && <button type="button" className="link" onClick={() => setMore(!more)}>{more ? 'Show less' : 'Show more'}</button>}
-    </>
-  );
-}
-
-export default function Activities() {
+/** Activity log as a compact list; click a row for the full details. */
+export default function Activities({ user }) {
   const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
   const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
   const [toDelete, setToDelete] = useState(null);
@@ -63,41 +31,65 @@ export default function Activities() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
+  const [salesOnly, setSalesOnly] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [limit, setLimit] = useState(PAGE);
 
-  const load = () => activitiesApi.list().then(setItems).catch((e) => setError(e.message));
+  const load = () => activitiesApi.list().then((r) => { setItems(r); setLoaded(true); }).catch((e) => setError(e.message));
   useEffect(() => {
     load();
     customersApi.all().then(setCustomers).catch((e) => setError(e.message));
     productsApi.list().then(setProducts).catch((e) => setError(e.message));
   }, []);
-  const productOf = (id) => products.find((p) => p.id === Number(id));
+  useEffect(() => { setLimit(PAGE); }, [search, typeFilter, ownerFilter, salesOnly, from, to]);
 
+  const productOf = (id) => products.find((p) => p.id === Number(id));
   const customerName = (id) => {
     const c = customers.find((x) => x.id === id);
     return c ? `${c.firstName} ${c.lastName}${c.company ? ` · ${c.company}` : ''}` : `Customer #${id}`;
   };
+  const memberName = (id) => (id === user.id ? `${names[id] || 'Me'} (me)` : names[id] || 'Unknown');
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   // date/time defaults to now but can be changed, e.g. when logging a meeting afterwards
   const openAdd = () => { setEditingId(null); setForm({ ...empty, activityTime: nowLocalInput() }); setFormError(''); setOpen(true); };
   const openEdit = (a) => {
+    setViewing(null);
     setEditingId(a.id);
-    setForm({ ...empty, ...a, attendees: a.attendees || '', notes: a.notes || '', outcome: a.outcome || '',
-      activityTime: toLocalInput(a.activityTime), productId: a.productId ? String(a.productId) : '',
-      unitsSold: a.unitsSold ? String(a.unitsSold) : '' });
+    const fullyPaid = a.saleAmount == null || a.amountPaid == null || Number(a.amountPaid) >= Number(a.saleAmount);
+    setForm({
+      ...empty, customerId: a.customerId, type: a.type, subject: a.subject,
+      attendees: a.attendees || '', notes: a.notes || '', outcome: a.outcome || '',
+      activityTime: toLocalInput(a.activityTime),
+      isSale: !!a.productId, productId: a.productId ? String(a.productId) : '',
+      unitsSold: a.unitsSold ? String(a.unitsSold) : '', saleAmount: a.saleAmount != null ? String(a.saleAmount) : '',
+      fullyPaid, amountPaid: !fullyPaid && a.amountPaid != null ? String(a.amountPaid) : '',
+    });
     setFormError('');
     setOpen(true);
   };
   const close = () => setOpen(false);
 
+  const credit = form.isSale && !form.fullyPaid && form.saleAmount !== ''
+    ? Math.max(0, Number(form.saleAmount) - Number(form.amountPaid || 0)) : 0;
+
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
-    const body = { ...form, customerId: Number(form.customerId), activityTime: form.activityTime || null,
-      productId: form.productId ? Number(form.productId) : null,
-      unitsSold: form.productId && form.unitsSold ? Number(form.unitsSold) : null };
+    const sale = form.isSale;
+    if (sale && !form.fullyPaid && Number(form.amountPaid || 0) > Number(form.saleAmount)) {
+      setFormError('Amount paid cannot be more than the total amount');
+      return;
+    }
+    const body = {
+      customerId: Number(form.customerId), type: form.type, subject: form.subject, attendees: form.attendees,
+      notes: form.notes, outcome: form.outcome, activityTime: form.activityTime || null,
+      productId: sale ? Number(form.productId) : null,
+      unitsSold: sale ? Number(form.unitsSold) : null,
+      saleAmount: sale ? Number(form.saleAmount) : null,
+      amountPaid: sale ? Number(form.fullyPaid ? form.saleAmount : (form.amountPaid || 0)) : null,
+    };
     try {
       if (editingId) await activitiesApi.update(editingId, body);
       else await activitiesApi.create(body);
@@ -111,6 +103,7 @@ export default function Activities() {
   const remove = async () => {
     const a = toDelete;
     setToDelete(null);
+    setViewing(null);
     try {
       await activitiesApi.remove(a.id);
       load();
@@ -123,39 +116,42 @@ export default function Activities() {
   const filtered = items
     .filter((a) => {
       const day = dayKey(a.activityTime);
-      const haystack = [customerName(a.customerId), a.subject, a.attendees, a.notes, a.outcome].join(' ').toLowerCase();
+      const haystack = [customerName(a.customerId), a.subject, a.attendees, a.notes, a.outcome, names[a.ownerId],
+        productOf(a.productId)?.name].join(' ').toLowerCase();
       return (!q || haystack.includes(q)) &&
         (!typeFilter || a.type === typeFilter) &&
         (!ownerFilter || String(a.ownerId) === ownerFilter) &&
+        (!salesOnly || a.productId) &&
         (!from || (day && day >= from)) &&
         (!to || (day && day <= to));
     })
     .sort((a, b) => String(b.activityTime || '').localeCompare(String(a.activityTime || '')) || b.id - a.id);
+  const shown = filtered.slice(0, limit);
 
-  const groups = [];
-  for (const a of filtered) {
-    const key = dayKey(a.activityTime);
-    if (!groups.length || groups[groups.length - 1].key !== key) groups.push({ key, entries: [] });
-    groups[groups.length - 1].entries.push(a);
-  }
-  const anyFilter = search || typeFilter || ownerFilter || from || to;
-  const counts = PICKABLE.map((t) => [t, filtered.filter((a) => a.type === t).length]).filter(([, n]) => n > 0);
+  const anyFilter = search || typeFilter || ownerFilter || salesOnly || from || to;
+  const deals = filtered.filter((a) => a.productId);
+  const dealTotal = deals.reduce((n, a) => n + Number(a.saleAmount || 0), 0);
+  const creditTotal = deals.reduce((n, a) => n + Number(a.creditAmount || 0), 0);
+  const cols = multi ? 5 : 4;
 
   return (
     <div>
       {error && <p className="error">{error}</p>}
 
       <div className="toolbar">
-        <input className="search" placeholder="Search customer, title, attendees, notes..." value={search}
+        <input className="search" placeholder="Search customer, title, notes, member, product..." value={search}
           onChange={(e) => setSearch(e.target.value)} />
+        <button type="button" className="primary" onClick={openAdd}>+ Log activity</button>
+      </div>
+      <div className="toolbar filters">
         <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} title="Filter by type">
           <option value="">All types</option>
           {Object.keys(TYPES).map((t) => <option key={t} value={t}>{TYPES[t].icon} {TYPES[t].label}</option>)}
         </select>
         {multi && (
-          <select className="filter-select" value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)} title="Filter by owner">
-            <option value="">All owners</option>
-            {team.map((t) => <option key={t.userId} value={t.userId}>{t.fullName}</option>)}
+          <select className="filter-select" value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)} title="Filter by member">
+            <option value="">All members</option>
+            {team.map((t) => <option key={t.userId} value={t.userId}>{t.userId === user.id ? `${t.fullName} (me)` : t.fullName}</option>)}
           </select>
         )}
         <label className="filter-time">From
@@ -164,70 +160,80 @@ export default function Activities() {
         <label className="filter-time">To
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
+        <label className="check-inline">
+          <input type="checkbox" checked={salesOnly} onChange={(e) => setSalesOnly(e.target.checked)} /> Sales only
+        </label>
         {anyFilter && (
-          <button type="button" onClick={() => { setSearch(''); setTypeFilter(''); setOwnerFilter(''); setFrom(''); setTo(''); }}>Clear</button>
+          <button type="button" onClick={() => { setSearch(''); setTypeFilter(''); setOwnerFilter(''); setSalesOnly(false); setFrom(''); setTo(''); }}>Clear filters</button>
         )}
-        <button type="button" className="primary" onClick={openAdd}>+ Log activity</button>
       </div>
 
       {filtered.length > 0 && (
         <p className="muted log-summary">
-          {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
-          {counts.length > 0 && ' · '}
-          {counts.map(([t, n]) => `${n} ${TYPES[t].label.toLowerCase()}${n > 1 ? 's' : ''}`).join(', ')}
+          {fmtNum(filtered.length)} {filtered.length === 1 ? 'entry' : 'entries'}
+          {deals.length > 0 && ` · ${deals.length} sale${deals.length > 1 ? 's' : ''} worth ${money(dealTotal)}`}
+          {creditTotal > 0 && ` · ${money(creditTotal)} on credit`}
         </p>
       )}
 
-      {groups.map((g) => (
-        <section key={g.key || 'none'} className="log-day">
-          <h3 className="log-day-head">{dayLabel(g.key)} <span className="count-pill">{g.entries.length}</span></h3>
-          {g.entries.map((a) => {
-            const t = typeOf(a.type);
-            return (
-              <article key={a.id} className="log-entry">
-                <div className="log-when">
-                  <span className="log-icon" aria-hidden="true">{t.icon}</span>
-                  <span className="log-time">{timeLabel(a.activityTime)}</span>
-                </div>
-                <div className="log-body">
-                  <div className="log-head">
-                    <div>
-                      <span className="log-type">{t.label}</span>
-                      <h4 className="log-title">{a.subject}</h4>
-                      <p className="muted log-meta">
-                        {customerName(a.customerId)}{multi && names[a.ownerId] ? ` · logged by ${names[a.ownerId]}` : ''}
-                      </p>
-                    </div>
-                    <div className="log-actions">
-                      <button className="plain" onClick={() => openEdit(a)}>Edit</button>
-                      <button className="plain" onClick={() => setToDelete(a)}>Delete</button>
-                    </div>
-                  </div>
-                  {a.productId && (
-                    <p className="log-sale"><span aria-hidden="true">🛒</span>
-                      Sold <strong>{Number(a.unitsSold || 0).toLocaleString('en-IN')} {productOf(a.productId)?.unit || 'units'}</strong>
-                      {' '}of {productOf(a.productId)?.name || 'a product'}</p>
-                  )}
-                  {a.attendees && <p className="log-attendees"><strong>Attendees:</strong> {a.attendees}</p>}
-                  {a.notes && <LongText text={a.notes} />}
-                  {a.outcome && (
-                    <div className="log-outcome">
-                      <strong>Outcome / next steps</strong>
-                      <p className="log-text">{a.outcome}</p>
-                    </div>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </section>
-      ))}
-
-      {filtered.length === 0 && (
-        <div className="log-empty">
-          <p className="muted">{items.length === 0 ? 'Nothing logged yet. Record your first meeting, call or note.' : 'No entries match the filters.'}</p>
-          {items.length === 0 && <button type="button" className="primary" onClick={openAdd}>+ Log activity</button>}
+      <div className="table-scroll">
+        <table className="act-table">
+          <thead>
+            <tr>
+              <th>When</th>{multi && <th>Member</th>}<th>Activity</th><th>Customer</th><th className="num">Sale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((a) => {
+              const t = typeOf(a.type);
+              return (
+                <tr key={a.id} className="clickable" tabIndex={0} onClick={() => setViewing(a)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setViewing(a); } }}>
+                  <td className="nowrap">{fmtWhen(a.activityTime)}</td>
+                  {multi && <td><span className={a.ownerId === user.id ? 'member-chip me' : 'member-chip'}>{memberName(a.ownerId)}</span></td>}
+                  <td className="act-title">
+                    <span><span aria-hidden="true">{t.icon}</span> {a.subject}</span>
+                    <span className="muted act-preview">{t.label}{(a.notes || a.outcome) ? ` · ${a.notes || a.outcome}` : ''}</span>
+                  </td>
+                  <td>{customerName(a.customerId)}</td>
+                  <td className="num">
+                    {a.productId ? (
+                      <div className="act-sale">
+                        <strong>{a.saleAmount != null ? money(a.saleAmount) : `${fmtNum(a.unitsSold)} units`}</strong>
+                        <PayBadge a={a} />
+                      </div>
+                    ) : <span className="muted">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+            {loaded && filtered.length === 0 && (
+              <tr><td colSpan={cols} className="muted">
+                {items.length === 0 ? 'Nothing logged yet. Use "+ Log activity" to record a meeting, call or sale.' : 'No entries match the filters.'}
+              </td></tr>
+            )}
+            {!loaded && !error && <tr><td colSpan={cols} className="muted">Loading...</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {filtered.length > shown.length && (
+        <div className="more-row">
+          <span className="muted">Showing {shown.length} of {fmtNum(filtered.length)}</span>
+          <button type="button" onClick={() => setLimit(limit + PAGE)}>Show more</button>
         </div>
+      )}
+
+      {viewing && (
+        <Modal title="Activity details" onClose={() => setViewing(null)}>
+          <ActivityDetail a={viewing} memberName={memberName(viewing.ownerId)}
+            customerName={customerName(viewing.customerId)} product={productOf(viewing.productId)} />
+          <div className="modal-actions">
+            <button type="button" className="danger-outline" onClick={() => setToDelete(viewing)}>Delete</button>
+            <span className="spacer" />
+            <button type="button" onClick={() => setViewing(null)}>Close</button>
+            <button type="button" className="primary" onClick={() => openEdit(viewing)}>Edit</button>
+          </div>
+        </Modal>
       )}
 
       {toDelete && (
@@ -266,22 +272,61 @@ export default function Activities() {
                 <input name="attendees" value={form.attendees} onChange={onChange} maxLength={500}
                   placeholder="e.g. Ravi (CFO), Priya, me" />
               </Field>
-              <Field label="Product sold (optional)">
-                <select name="productId" value={form.productId}
-                  onChange={(e) => setForm({ ...form, productId: e.target.value, unitsSold: e.target.value ? form.unitsSold : '' })}>
-                  <option value="">No sale</option>
-                  {products.filter((p) => p.active || String(p.id) === form.productId).map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label={`Units sold${productOf(form.productId) ? ` (${productOf(form.productId).unit})` : ''}`}>
-                <input name="unitsSold" type="number" min="1" step="1" max="1000000" value={form.unitsSold} onChange={onChange}
-                  disabled={!form.productId} required={!!form.productId}
-                  placeholder={form.productId ? 'e.g. 10' : 'Pick a product first'} />
-              </Field>
+            </div>
+
+            <div className={form.isSale ? 'sale-box on' : 'sale-box'}>
+              <label className="check-inline sale-toggle">
+                <input type="checkbox" checked={form.isSale}
+                  onChange={(e) => setForm({ ...form, isSale: e.target.checked })} />
+                <span><strong>This includes a sale</strong> <span className="muted">— record product, units and payment</span></span>
+              </label>
+              {form.isSale && (
+                <div className="form-grid">
+                  <Field label="Product">
+                    <select name="productId" value={form.productId} onChange={onChange} required>
+                      <option value="">Select product...</option>
+                      {products.filter((p) => p.active || String(p.id) === form.productId).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={`Units sold${productOf(form.productId) ? ` (${productOf(form.productId).unit})` : ''}`}>
+                    <input name="unitsSold" type="number" min="1" step="1" max="1000000" value={form.unitsSold}
+                      onChange={onChange} required placeholder="e.g. 10" />
+                  </Field>
+                  <Field label="Total deal amount (₹)">
+                    <input name="saleAmount" type="number" min="0" step="0.01" value={form.saleAmount}
+                      onChange={onChange} required placeholder="e.g. 50000" />
+                  </Field>
+                  <div className="field">
+                    <span>Payment</span>
+                    <div className="seg pay-seg" role="radiogroup" aria-label="Payment">
+                      {[[true, 'Fully paid'], [false, 'Part on credit']].map(([v, label]) => (
+                        <button key={label} type="button" role="radio" aria-checked={form.fullyPaid === v}
+                          className={form.fullyPaid === v ? 'seg-btn active' : 'seg-btn'}
+                          onClick={() => setForm({ ...form, fullyPaid: v })}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {!form.fullyPaid && (
+                    <>
+                      <Field label="Amount paid now (₹)">
+                        <input name="amountPaid" type="number" min="0" step="0.01" max={form.saleAmount || undefined}
+                          value={form.amountPaid} onChange={onChange} required placeholder="0 if nothing paid yet" />
+                      </Field>
+                      <div className="credit-note">
+                        <span className="muted">On credit</span>
+                        <strong>{money(credit)}</strong>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="form-grid">
               <Field label="Notes" wide>
-                <textarea name="notes" rows={7} maxLength={2000} value={form.notes} onChange={onChange}
+                <textarea name="notes" rows={6} maxLength={2000} value={form.notes} onChange={onChange}
                   placeholder="What was discussed..." />
                 <small className="muted count">{form.notes.length} / 2000</small>
               </Field>

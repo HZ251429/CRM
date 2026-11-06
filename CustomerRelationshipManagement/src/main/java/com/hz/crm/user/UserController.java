@@ -85,11 +85,28 @@ public class UserController {
 		}
 	}
 
+	private static boolean isAdmin(Scope s) {
+		return s.me().getRole() == Role.TENANT_ADMIN;
+	}
+
+	/**
+	 * A lead (member) manages only people below them: the manager they pick must be themselves or someone in their
+	 * own team, so new and moved members always stay inside the lead's team.
+	 */
+	private Long leadManager(Long managerId, Scope s) {
+		Long m = managerId == null ? s.me().getId() : managerId;
+		if (!s.canSeeOwner(m)) {
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You can only add or move people within your own team");
+		}
+		return m;
+	}
+
+	/** The admin sees everyone; a member sees themselves and everyone below them. */
 	@GetMapping
 	public List<UserView> list() {
 		Scope s = access.scope();
 		Map<Long, String> names = roleNames(s.tenantId());
-		return s.tenantUsers().stream().map(u -> view(u, names)).toList();
+		return s.tenantUsers().stream().filter(u -> s.canSeeOwner(u.getId())).map(u -> view(u, names)).toList();
 	}
 
 	@PostMapping
@@ -102,7 +119,8 @@ public class UserController {
 		if (users.existsByUsernameIgnoreCase(login)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
 		}
-		checkManager(req.managerId(), s);
+		Long managerId = isAdmin(s) ? req.managerId() : leadManager(req.managerId(), s);
+		checkManager(managerId, s);
 		checkTeamRole(req.teamRoleId(), s);
 		AppUser u = new AppUser();
 		u.setUsername(login);
@@ -110,7 +128,7 @@ public class UserController {
 		u.setFullName(req.fullName().trim());
 		u.setRole(Role.MEMBER);
 		u.setTenantId(s.tenantId());
-		u.setManagerId(req.managerId());
+		u.setManagerId(managerId);
 		u.setTeamRoleId(req.teamRoleId());
 		return view(users.save(u), roleNames(s.tenantId()));
 	}
@@ -121,17 +139,28 @@ public class UserController {
 		Scope s = access.scope();
 		AppUser u = s.tenantUsers().stream().filter(x -> x.getId().equals(id)).findFirst()
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		boolean admin = isAdmin(s);
+		if (!admin) {
+			// a lead may edit people below them, not themselves or anyone outside their team
+			if (u.getId().equals(s.me().getId()) || !s.canSeeOwner(u.getId())) {
+				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You can only edit people below you");
+			}
+			if (req.password() != null && !req.password().isBlank()) {
+				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the admin can reset passwords");
+			}
+		}
+		Long managerId = admin ? req.managerId() : leadManager(req.managerId(), s);
 		if (req.fullName() != null && !req.fullName().isBlank()) {
 			u.setFullName(req.fullName().trim());
 		}
 		if (u.getRole() == Role.MEMBER) {
-			checkManager(req.managerId(), s);
+			checkManager(managerId, s);
 			Set<Long> subtree = access.subtree(u.getId(), s.tenantUsers());
-			if (req.managerId() != null && subtree.contains(req.managerId())) {
+			if (managerId != null && subtree.contains(managerId)) {
 				throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
 						"A user cannot report to themselves or to one of their own subordinates");
 			}
-			u.setManagerId(req.managerId());
+			u.setManagerId(managerId);
 			checkTeamRole(req.teamRoleId(), s);
 			u.setTeamRoleId(req.teamRoleId());
 			if (req.active() != null) {

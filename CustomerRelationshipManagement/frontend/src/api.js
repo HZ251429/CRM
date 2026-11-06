@@ -70,7 +70,6 @@ export const customersApi = {
   search: (q, page, size = 10, ownerId = '') =>
     request(`/customers?q=${encodeURIComponent(q)}&page=${page}&size=${size}${ownerId ? `&ownerId=${ownerId}` : ''}`),
 };
-export const dealsApi = crud('deals');
 export const activitiesApi = crud('activities');
 export const usersApi = crud('users');
 export const rolesApi = crud('roles');
@@ -83,5 +82,6 @@ export const tenantsApi = {
   setActive: (id, active) =>
     request(`/admin/tenants/${id}/active`, { method: 'PUT', body: JSON.stringify({ active }) }),
 };
-export const getDashboard = (userId) => request(`/dashboard${userId ? `?userId=${userId}` : ''}`);
+export const getDashboard = (userId, scope = 'me') =>
+  request(`/dashboard?scope=${scope}${userId ? `&userId=${userId}` : ''}`);
 export const getTeam = () => request('/dashboard/team');

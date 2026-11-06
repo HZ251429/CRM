@@ -17,8 +17,10 @@ public class MeController {
 
 	private final AccessService access;
 	private final TenantRepository tenants;
+	private final AppUserRepository users;
 
-	public MeController(AccessService access, TenantRepository tenants) {
+	public MeController(AccessService access, TenantRepository tenants, AppUserRepository users) {
+		this.users = users;
 		this.access = access;
 		this.tenants = tenants;
 	}
@@ -36,6 +38,10 @@ public class MeController {
 				: tenants.findById(me.getTenantId()).map(t -> t.getName()).orElse(null));
 		r.put("tenantCode", me.getTenantId() == null ? null
 				: tenants.findById(me.getTenantId()).map(t -> t.getCode()).orElse(null));
+		// whether anyone reports to this user (the admin leads everyone in the tenant)
+		r.put("hasTeam", me.getTenantId() != null && users.findByTenantId(me.getTenantId()).stream()
+				.anyMatch(u -> !u.getId().equals(me.getId())
+						&& (me.getRole() == Role.TENANT_ADMIN || me.getId().equals(u.getManagerId()))));
 		return r;
 	}
 }

@@ -4,7 +4,6 @@ import Logo from './Logo.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Customers from './pages/Customers.jsx';
-import Deals from './pages/Deals.jsx';
 import Activities from './pages/Activities.jsx';
 import Tenants from './pages/Tenants.jsx';
 import Team from './pages/Team.jsx';
@@ -14,7 +13,6 @@ import Tasks from './pages/Tasks.jsx';
 const ALL_TABS = {
   Dashboard: { page: Dashboard, icon: '📊' },
   Customers: { page: Customers, icon: '👥' },
-  Deals: { page: Deals, icon: '💼' },
   Activities: { page: Activities, icon: '✅' },
   Team: { page: Team, icon: '🧑‍🤝‍🧑' },
   Products: { page: Products, icon: '📦' },
@@ -24,8 +22,8 @@ const ALL_TABS = {
 
 const TABS_BY_ROLE = {
   SUPER_ADMIN: ['Tenants'],
-  TENANT_ADMIN: ['Dashboard', 'Team', 'Products', 'Tasks', 'Customers', 'Deals', 'Activities'],
-  MEMBER: ['Dashboard', 'Tasks', 'Customers', 'Deals', 'Activities'],
+  TENANT_ADMIN: ['Dashboard', 'Team', 'Products', 'Tasks', 'Customers', 'Activities'],
+  MEMBER: ['Dashboard', 'Team', 'Tasks', 'Customers', 'Activities'],
 };
 
 const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', TENANT_ADMIN: 'Admin', MEMBER: 'Member' };

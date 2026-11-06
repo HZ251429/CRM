@@ -93,7 +93,6 @@ public class CustomerController {
 		existing.setEmail(customer.getEmail());
 		existing.setPhone(customer.getPhone());
 		existing.setCompany(customer.getCompany());
-		existing.setStatus(customer.getStatus());
 		return ResponseEntity.ok(repository.save(existing));
 	}
 

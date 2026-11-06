@@ -49,10 +49,21 @@ public class ActivityController {
 	private void checkSale(Activity activity, Scope s, Long currentProductId) {
 		if (activity.getProductId() == null) {
 			activity.setUnitsSold(null);
+			activity.setSaleAmount(null);
+			activity.setAmountPaid(null);
 			return;
 		}
 		if (activity.getUnitsSold() == null) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter the number of units sold");
+		}
+		if (activity.getSaleAmount() == null) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter the total amount of the sale");
+		}
+		if (activity.getAmountPaid() == null) {
+			activity.setAmountPaid(activity.getSaleAmount()); // not stated = fully paid
+		}
+		if (activity.getAmountPaid().compareTo(activity.getSaleAmount()) > 0) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Amount paid cannot be more than the total amount");
 		}
 		var product = products.findById(activity.getProductId()).filter(p -> s.tenantId().equals(p.getTenantId()))
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown product"));
@@ -95,6 +106,8 @@ public class ActivityController {
 		a.setCustomerId(activity.getCustomerId());
 		a.setProductId(activity.getProductId());
 		a.setUnitsSold(activity.getUnitsSold());
+		a.setSaleAmount(activity.getSaleAmount());
+		a.setAmountPaid(activity.getAmountPaid());
 		a.setType(activity.getType());
 		a.setSubject(activity.getSubject());
 		a.setAttendees(activity.getAttendees());

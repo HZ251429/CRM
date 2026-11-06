@@ -1,10 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usersApi, rolesApi } from '../api.js';
 import Modal, { Field } from '../Modal.jsx';
+import TeamOverview from './TeamOverview.jsx';
 
 const emptyMember = { username: '', fullName: '', password: '', managerId: '', teamRoleId: '' };
 
+/** Team section: each person sees only themselves and the people below them, and can add members under them. */
 export default function Team({ user }) {
+  const isAdmin = user.role === 'TENANT_ADMIN';
+  const [view, setView] = useState('overview');
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="seg" role="tablist">
+          {[['overview', 'Overview'], ['members', isAdmin ? 'Members & roles' : 'My members']].map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={view === k}
+              className={view === k ? 'seg-btn active' : 'seg-btn'} onClick={() => setView(k)}>{label}</button>
+          ))}
+        </div>
+      </div>
+      {view === 'overview' ? <TeamOverview user={user} /> : <TeamMembers user={user} />}
+    </div>
+  );
+}
+
+function TeamMembers({ user }) {
+  const isAdmin = user.role === 'TENANT_ADMIN';
   const code = user?.tenantCode || 'CODE';
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
@@ -24,28 +45,29 @@ export default function Team({ user }) {
   const loadRoles = () => rolesApi.list().then(setRoles).catch((e) => setError(e.message));
   useEffect(() => { loadUsers(); loadRoles(); }, []);
 
-  const admin = users.find((u) => u.role === 'TENANT_ADMIN');
+  // top of the tree: the admin sees the whole company, anyone else starts at themselves
+  const root = isAdmin ? users.find((u) => u.role === 'TENANT_ADMIN') : users.find((u) => u.id === user.id);
 
   // children lookup: members without a manager report directly to the admin
   const children = useMemo(() => {
     const map = {};
-    if (!admin) return map;
+    if (!root) return map;
     users.forEach((u) => {
-      if (u.id === admin.id) return;
-      const parent = u.managerId && users.some((x) => x.id === u.managerId) ? u.managerId : admin.id;
+      if (u.id === root.id) return;
+      const parent = u.managerId && users.some((x) => x.id === u.managerId) ? u.managerId : root.id;
       (map[parent] = map[parent] || []).push(u);
     });
     Object.values(map).forEach((list) => list.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '')));
     return map;
-  }, [users, admin]);
+  }, [users, root]);
 
   // the admin row starts open so the first level is visible; everything else is collapsed
   useEffect(() => {
-    if (admin && !initialised) {
-      setExpanded(new Set([admin.id]));
+    if (root && !initialised) {
+      setExpanded(new Set([root.id]));
       setInitialised(true);
     }
-  }, [admin, initialised]);
+  }, [root, initialised]);
 
   const toggle = (id) => {
     const next = new Set(expanded);
@@ -53,7 +75,7 @@ export default function Team({ user }) {
     setExpanded(next);
   };
   const expandAll = () => setExpanded(new Set(users.map((u) => u.id)));
-  const collapseAll = () => setExpanded(new Set(admin ? [admin.id] : []));
+  const collapseAll = () => setExpanded(new Set(root ? [root.id] : []));
 
   const countAll = (id) => (children[id] || []).reduce((n, c) => n + 1 + countAll(c.id), 0);
 
@@ -62,11 +84,12 @@ export default function Team({ user }) {
     rows.push({ u, depth });
     if (expanded.has(u.id)) (children[u.id] || []).forEach((c) => walk(c, depth + 1));
   };
-  if (admin) walk(admin, 0);
+  if (root) walk(root, 0);
 
   const nameOf = (id) => users.find((u) => u.id === id)?.fullName;
   const managerLabel = (u) => {
     if (u.role === 'TENANT_ADMIN') return '-';
+    if (!isAdmin && u.id === user.id) return '-'; // a lead's own manager is outside their view
     return u.managerId && nameOf(u.managerId) ? nameOf(u.managerId) : 'Admin';
   };
 
@@ -77,7 +100,8 @@ export default function Team({ user }) {
     return ids;
   };
 
-  const openAdd = (managerId = '') => {
+  // a lead's new members report to them by default
+  const openAdd = (managerId = isAdmin ? '' : user.id) => {
     setForm({ ...emptyMember, managerId: managerId ? String(managerId) : '' });
     setFormError('');
     setMemberModal({ editing: null });
@@ -171,6 +195,8 @@ export default function Team({ user }) {
   const editing = memberModal?.editing;
   const blocked = editing ? subtreeIds(editing.id) : new Set();
   const managerOptions = users.filter((u) => u.role === 'MEMBER' && u.active && !blocked.has(u.id));
+  // the admin manages every member; a lead manages the people below them (not themselves)
+  const canManage = (u) => u.role === 'MEMBER' && (isAdmin || u.id !== user.id);
 
   return (
     <div>
@@ -180,7 +206,7 @@ export default function Team({ user }) {
         <button type="button" onClick={expandAll}>Expand all</button>
         <button type="button" onClick={collapseAll}>Collapse all</button>
         <span className="spacer" />
-        <button type="button" onClick={() => { setRoleError(''); setRolesOpen(true); }}>Manage roles</button>
+        {isAdmin && <button type="button" onClick={() => { setRoleError(''); setRolesOpen(true); }}>Manage roles</button>}
         <button type="button" className="primary" onClick={() => openAdd()}>+ Add member</button>
       </div>
 
@@ -200,7 +226,7 @@ export default function Team({ user }) {
                         {isOpen ? '▾' : '▸'}
                       </button>
                     ) : <span className="expander-gap" />}
-                    <span className="tree-name">{u.fullName}</span>
+                    <span className="tree-name">{u.fullName}{u.id === user.id ? ' (me)' : ''}</span>
                     {kids.length > 0 && <span className="count-pill" title="Members under this person">{countAll(u.id)}</span>}
                   </div>
                 </td>
@@ -212,9 +238,9 @@ export default function Team({ user }) {
                   {u.role === 'MEMBER' && u.active && (
                     <button className="plain" onClick={() => openAdd(u.id)} title="Add a member under this person">+ Add under</button>
                   )}
-                  {u.role === 'MEMBER' && <button className="plain" onClick={() => openEdit(u)}>Edit</button>}
-                  <button className="plain" onClick={() => resetPassword(u)}>Reset password</button>
-                  {u.role === 'MEMBER' && (
+                  {canManage(u) && <button className="plain" onClick={() => openEdit(u)}>Edit</button>}
+                  {isAdmin && <button className="plain" onClick={() => resetPassword(u)}>Reset password</button>}
+                  {canManage(u) && (
                     <button className="plain" onClick={() => setActive(u, !u.active)}>{u.active ? 'Deactivate' : 'Activate'}</button>
                   )}
                 </td>
@@ -225,7 +251,7 @@ export default function Team({ user }) {
         </tbody>
       </table>
       <p className="muted hint">
-        Click ▸ to show the members under a person. Members can see their own data and the data of everyone below them.
+        Click ▸ to show the members under a person. {isAdmin ? 'Members can see their own data and the data of everyone below them.' : 'You see yourself and everyone below you, and can add members under yourself or anyone in your team.'}
       </p>
 
       {memberModal && (
@@ -259,13 +285,13 @@ export default function Team({ user }) {
               </Field>
               <Field label="Reports to">
                 <select name="managerId" value={form.managerId} onChange={onChange}>
-                  <option value="">Admin</option>
+                  {isAdmin && <option value="">Admin</option>}
                   {managerOptions.map((m) => <option key={m.id} value={m.id}>{m.fullName}</option>)}
                 </select>
               </Field>
             </div>
             {roles.length === 0 && (
-              <p className="muted hint">No roles yet. Use "Manage roles" to create roles such as Sales Manager or Executive.</p>
+              <p className="muted hint">{isAdmin ? 'No roles yet. Use "Manage roles" to create roles such as Sales Manager or Executive.' : 'No roles yet. Your admin can create roles.'}</p>
             )}
             <div className="modal-actions">
               <button type="button" onClick={closeMember}>Cancel</button>

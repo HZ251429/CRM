@@ -55,7 +55,6 @@ public class SecurityConfig {
 				.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 				.requestMatchers("/api/auth/login", "/api/auth/csrf", "/error").permitAll()
 				.requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
-				.requestMatchers("/api/users/**", "/api/roles/**").hasRole("TENANT_ADMIN")
 				.anyRequest().authenticated());
 		return http.build();
 	}

@@ -65,15 +65,15 @@ function TenantDetail({ id, onBack }) {
 
       {section === 'Customers' && (
         <table>
-          <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Company</th><th>Status</th><th>Owner</th></tr></thead>
+          <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Company</th><th>Owner</th></tr></thead>
           <tbody>
             {customers.map((c) => (
               <tr key={c.id}>
                 <td>{c.firstName} {c.lastName}</td><td>{c.email}</td><td>{c.phone}</td>
-                <td>{c.company}</td><td>{c.status}</td><td>{userName[c.ownerId]}</td>
+                <td>{c.company}</td><td>{userName[c.ownerId]}</td>
               </tr>
             ))}
-            {customers.length === 0 && <tr><td colSpan="6" className="muted">No customers</td></tr>}
+            {customers.length === 0 && <tr><td colSpan="5" className="muted">No customers</td></tr>}
           </tbody>
         </table>
       )}

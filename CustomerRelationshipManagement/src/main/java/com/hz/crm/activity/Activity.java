@@ -1,5 +1,6 @@
 package com.hz.crm.activity;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -10,6 +11,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -64,6 +67,18 @@ public class Activity {
 	@Max(1_000_000)
 	private Integer unitsSold;
 
+	/** total value of the sale (INR) */
+	@DecimalMin("0")
+	@Digits(integer = 12, fraction = 2)
+	@Column(precision = 14, scale = 2)
+	private BigDecimal saleAmount;
+
+	/** how much of the sale amount has been paid; the rest is on credit */
+	@DecimalMin("0")
+	@Digits(integer = 12, fraction = 2)
+	@Column(precision = 14, scale = 2)
+	private BigDecimal amountPaid;
+
 	/** when it happened; set to "now" automatically when not provided */
 	private LocalDateTime activityTime;
 
@@ -96,6 +111,15 @@ public class Activity {
 	public void setProductId(Long productId) { this.productId = productId; }
 	public Integer getUnitsSold() { return unitsSold; }
 	public void setUnitsSold(Integer unitsSold) { this.unitsSold = unitsSold; }
+	public BigDecimal getSaleAmount() { return saleAmount; }
+	public void setSaleAmount(BigDecimal saleAmount) { this.saleAmount = saleAmount; }
+	public BigDecimal getAmountPaid() { return amountPaid; }
+	public void setAmountPaid(BigDecimal amountPaid) { this.amountPaid = amountPaid; }
+	/** amount still owed by the customer */
+	@com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+	public BigDecimal getCreditAmount() {
+		return saleAmount == null ? null : saleAmount.subtract(amountPaid == null ? saleAmount : amountPaid);
+	}
 	public LocalDateTime getActivityTime() { return activityTime; }
 	public void setActivityTime(LocalDateTime activityTime) { this.activityTime = activityTime; }
 }

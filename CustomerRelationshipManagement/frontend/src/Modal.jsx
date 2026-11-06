@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 
 /** Popup dialog. Closes on Esc or when the dark backdrop is clicked. */
-export default function Modal({ title, onClose, children }) {
+export default function Modal({ title, onClose, children, wide = false }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -10,7 +10,7 @@ export default function Modal({ title, onClose, children }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={wide ? 'modal wide' : 'modal'} role="dialog" aria-modal="true" aria-label={title}>
         <div className="modal-head">
           <h2>{title}</h2>
           <button type="button" className="modal-x" onClick={onClose} aria-label="Close">×</button>
