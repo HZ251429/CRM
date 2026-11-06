@@ -8,6 +8,8 @@ import Deals from './pages/Deals.jsx';
 import Activities from './pages/Activities.jsx';
 import Tenants from './pages/Tenants.jsx';
 import Team from './pages/Team.jsx';
+import Products from './pages/Products.jsx';
+import Tasks from './pages/Tasks.jsx';
 
 const ALL_TABS = {
   Dashboard: { page: Dashboard, icon: '📊' },
@@ -15,13 +17,15 @@ const ALL_TABS = {
   Deals: { page: Deals, icon: '💼' },
   Activities: { page: Activities, icon: '✅' },
   Team: { page: Team, icon: '🧑‍🤝‍🧑' },
+  Products: { page: Products, icon: '📦' },
+  Tasks: { page: Tasks, icon: '🎯' },
   Tenants: { page: Tenants, icon: '🏢' },
 };
 
 const TABS_BY_ROLE = {
   SUPER_ADMIN: ['Tenants'],
-  TENANT_ADMIN: ['Dashboard', 'Team', 'Customers', 'Deals', 'Activities'],
-  MEMBER: ['Dashboard', 'Customers', 'Deals', 'Activities'],
+  TENANT_ADMIN: ['Dashboard', 'Team', 'Products', 'Tasks', 'Customers', 'Deals', 'Activities'],
+  MEMBER: ['Dashboard', 'Tasks', 'Customers', 'Deals', 'Activities'],
 };
 
 const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', TENANT_ADMIN: 'Admin', MEMBER: 'Member' };
@@ -63,7 +67,7 @@ export default function App() {
           <button className="nav" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
             <span>{theme === 'dark' ? '☀️' : '🌙'}</span> {theme === 'dark' ? 'Light mode' : 'Dark mode'}
           </button>
-          <button className="nav" onClick={() => { logout(); setUser(null); }}>
+          <button className="nav" onClick={async () => { await logout(); setUser(null); }}>
             <span>🚪</span> Logout
           </button>
         </div>

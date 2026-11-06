@@ -5,9 +5,10 @@ services:
     environment:
       POSTGRES_DB: crm
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # set DB_PASSWORD in your shell or in a git-ignored .env file next to this file
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - crm-data:/var/lib/postgresql/data
 

@@ -19,8 +19,11 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
+import com.hz.crm.security.SessionService;
 import com.hz.crm.tenant.TenantRepository;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -34,7 +37,7 @@ public class UserController {
 			Long teamRoleId, String teamRoleName) {
 	}
 
-	public record CreateUserRequest(@NotBlank String username, @NotBlank @Size(min = 6) String password,
+	public record CreateUserRequest(@NotBlank String username, @NotBlank @Size(min = 8, max = 72) String password,
 			@NotBlank String fullName, Long managerId, Long teamRoleId) {
 	}
 
@@ -47,9 +50,11 @@ public class UserController {
 	private final AccessService access;
 	private final TenantRepository tenants;
 	private final TeamRoleRepository teamRoles;
+	private final SessionService sessions;
 
 	public UserController(AppUserRepository users, PasswordEncoder encoder, AccessService access,
-			TenantRepository tenants, TeamRoleRepository teamRoles) {
+			TenantRepository tenants, TeamRoleRepository teamRoles, SessionService sessions) {
+		this.sessions = sessions;
 		this.users = users;
 		this.encoder = encoder;
 		this.access = access;
@@ -111,7 +116,8 @@ public class UserController {
 	}
 
 	@PutMapping("/{id}")
-	public UserView update(@PathVariable Long id, @RequestBody UpdateUserRequest req) {
+	public UserView update(@PathVariable Long id, @RequestBody UpdateUserRequest req, HttpServletRequest request,
+			HttpServletResponse response) {
 		Scope s = access.scope();
 		AppUser u = s.tenantUsers().stream().filter(x -> x.getId().equals(id)).findFirst()
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
@@ -133,11 +139,16 @@ public class UserController {
 			}
 		}
 		if (req.password() != null && !req.password().isBlank()) {
-			if (req.password().length() < 6) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be at least 6 characters");
+			if (req.password().length() < 8 || req.password().length() > 72) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must be 8 to 72 characters");
 			}
 			u.setPasswordHash(encoder.encode(req.password()));
 		}
-		return view(users.save(u), roleNames(s.tenantId()));
+		AppUser saved = users.save(u);
+		if (saved.getId().equals(s.me().getId())) {
+			// keep the admin's own session valid after changing their own password or name
+			sessions.refresh(saved, request, response);
+		}
+		return view(saved, roleNames(s.tenantId()));
 	}
 }

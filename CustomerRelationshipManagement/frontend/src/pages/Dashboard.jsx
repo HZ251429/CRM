@@ -44,7 +44,7 @@ export default function Dashboard({ user }) {
           <div className="cards">
             <div className="card"><h3>Customers</h3><p>{d.totalCustomers}</p></div>
             <div className="card"><h3>Deals</h3><p>{d.totalDeals}</p></div>
-            <div className="card"><h3>Open activities</h3><p>{d.openActivities}</p></div>
+            <div className="card"><h3>Activities (last 7 days)</h3><p>{d.activitiesThisWeek}</p></div>
             <div className="card"><h3>Pipeline value</h3><p>{money(d.pipelineValue)}</p></div>
             <div className="card"><h3>Won value</h3><p>{money(d.wonValue)}</p></div>
           </div>
@@ -64,7 +64,7 @@ export default function Dashboard({ user }) {
           <h3 className="section">Team overview</h3>
           <table>
             <thead>
-              <tr><th>Member</th><th>Reports to</th><th>Customers</th><th>Deals</th><th>Open activities</th>
+              <tr><th>Member</th><th>Reports to</th><th>Customers</th><th>Deals</th><th>Activities (7 days)</th>
                 <th>Pipeline</th><th>Won</th><th></th></tr>
             </thead>
             <tbody>
@@ -72,7 +72,7 @@ export default function Dashboard({ user }) {
                 <tr key={t.userId}>
                   <td>{t.fullName}{!t.active && <span className="badge off">inactive</span>}</td>
                   <td>{t.role === 'TENANT_ADMIN' ? '-' : (t.managerId && names[t.managerId] ? names[t.managerId] : 'Admin')}</td>
-                  <td>{t.totalCustomers}</td><td>{t.totalDeals}</td><td>{t.openActivities}</td>
+                  <td>{t.totalCustomers}</td><td>{t.totalDeals}</td><td>{t.activitiesThisWeek}</td>
                   <td>{money(t.pipelineValue)}</td><td>{money(t.wonValue)}</td>
                   <td><button onClick={() => { setSelected(t.userId); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>View dashboard</button></td>
                 </tr>

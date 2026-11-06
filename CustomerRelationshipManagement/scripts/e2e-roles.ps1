@@ -1,12 +1,7 @@
 $base = 'http://localhost:8081/api'
-function AuthH($u, $p) { @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${u}:${p}")) } }
-function Call($method, $path, $user, $pass, $body) {
-  $req = @{ Uri = "$base$path"; Method = $method; Headers = (AuthH $user $pass); ContentType = 'application/json'; UseBasicParsing = $true }
-  if ($body) { $req.Body = ($body | ConvertTo-Json) }
-  try { $r = Invoke-WebRequest @req; if ($r.Content) { return $r.Content | ConvertFrom-Json } } catch { return "HTTP " + [int]$_.Exception.Response.StatusCode }
-}
+. "$PSScriptRoot\_session.ps1"
 $c = ('R' + (Get-Random -Maximum 9999))
-$t = Call POST '/admin/tenants' superadmin superadmin123 @{ name = "Roles $c"; code = $c; adminUsername = 'boss'; adminPassword = 'secret123' }
+$t = Call POST '/admin/tenants' superadmin $SA @{ name = "Roles $c"; code = $c; adminUsername = 'boss'; adminPassword = 'secret123' }
 $a = "boss@$c"
 "--- roles: create, duplicate (409), list"
 $r1 = Call POST '/roles' $a secret123 @{ name = 'Sales Manager' }
@@ -24,5 +19,5 @@ Call DELETE "/roles/$($r1.id)" $a secret123
 "--- member cannot manage roles (expect 403)"
 Call GET '/roles' "lead@$c" secret123
 "--- super admin detail shows role"
-$d = Call GET "/admin/tenants/$($t.id)/details" superadmin superadmin123
+$d = Call GET "/admin/tenants/$($t.id)/details" superadmin $SA
 ($d.users | ForEach-Object { "$($_.username):$($_.teamRoleName)" }) -join ', '

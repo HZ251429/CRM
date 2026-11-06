@@ -54,7 +54,7 @@ public class TenantAdminController {
 	}
 
 	public record CreateTenantRequest(@NotBlank String name, @NotBlank @Size(max = 5) String code,
-			@NotBlank String adminUsername, @NotBlank @Size(min = 6) String adminPassword, String adminFullName) {
+			@NotBlank String adminUsername, @NotBlank @Size(min = 8, max = 72) String adminPassword, String adminFullName) {
 	}
 
 	public record ActiveRequest(boolean active) {

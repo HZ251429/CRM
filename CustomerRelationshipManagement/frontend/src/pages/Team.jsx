@@ -123,7 +123,7 @@ export default function Team({ user }) {
   };
 
   const resetPassword = async (u) => {
-    const password = window.prompt(`New password for ${u.username} (min 6 characters):`);
+    const password = window.prompt(`New password for ${u.username} (8-72 characters):`);
     if (!password) return;
     setError('');
     try {
@@ -246,7 +246,7 @@ export default function Team({ user }) {
                     </span>
                   </Field>
                   <Field label="Password">
-                    <input name="password" type="password" minLength={6} value={form.password} onChange={onChange}
+                    <input name="password" type="password" minLength={8} maxLength={72} value={form.password} onChange={onChange}
                       required autoComplete="new-password" />
                   </Field>
                 </>

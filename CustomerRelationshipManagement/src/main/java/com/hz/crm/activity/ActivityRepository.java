@@ -12,6 +12,9 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
 
 	List<Activity> findByTenantIdAndOwnerIdIn(Long tenantId, Collection<Long> owners);
 
+	/** all activities of a tenant that recorded a sale */
+	List<Activity> findByTenantIdAndProductIdIsNotNull(Long tenantId);
+
 	List<Activity> findByTenantIdAndOwnerIdInAndCustomerId(Long tenantId, Collection<Long> owners, Long customerId);
 
 	@Transactional

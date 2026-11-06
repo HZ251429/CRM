@@ -1,16 +1,11 @@
 $ErrorActionPreference = 'Stop'
-$base = 'http://localhost:8080/api'
-function AuthH($u, $p) { @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${u}:${p}")) } }
-function Call($method, $path, $user, $pass, $body) {
-  $req = @{ Uri = "$base$path"; Method = $method; Headers = (AuthH $user $pass); ContentType = 'application/json'; UseBasicParsing = $true }
-  if ($body) { $req.Body = ($body | ConvertTo-Json) }
-  try { $r = Invoke-WebRequest @req; if ($r.Content) { return $r.Content | ConvertFrom-Json } } catch { return "HTTP " + [int]$_.Exception.Response.StatusCode }
-}
+$base = 'http://localhost:8081/api'
+. "$PSScriptRoot\_session.ps1"
 $sfx = Get-Random -Maximum 9999
 
 "--- super admin creates two tenants"
-$t1 = Call POST '/admin/tenants' superadmin superadmin123 @{ name = "Acme$sfx"; adminUsername = "acme$sfx"; adminPassword = 'secret123'; adminFullName = 'Acme Admin' }
-$t2 = Call POST '/admin/tenants' superadmin superadmin123 @{ name = "Globex$sfx"; adminUsername = "globex$sfx"; adminPassword = 'secret123' }
+$t1 = Call POST '/admin/tenants' superadmin $SA @{ name = "Acme$sfx"; adminUsername = "acme$sfx"; adminPassword = 'secret123'; adminFullName = 'Acme Admin' }
+$t2 = Call POST '/admin/tenants' superadmin $SA @{ name = "Globex$sfx"; adminUsername = "globex$sfx"; adminPassword = 'secret123' }
 "tenants: $($t1.name), $($t2.name)"
 
 "--- tenant admin builds hierarchy: lead -> member"
@@ -48,9 +43,9 @@ Call GET "/customers/$($c1.id)" "globex$sfx" secret123
 Call GET '/users' "mem$sfx" secret123
 Call GET '/admin/tenants' $a secret123
 "--- super admin has no CRM data: expect 403"
-Call GET '/customers/all' superadmin superadmin123
+Call GET '/customers/all' superadmin $SA
 "--- disable acme tenant then login: expect 401"
-Call PUT "/admin/tenants/$($t1.id)/active" superadmin superadmin123 @{ active = $false } | Out-Null
+Call PUT "/admin/tenants/$($t1.id)/active" superadmin $SA @{ active = $false } | Out-Null
 Call GET '/me' "lead$sfx" secret123
 
 

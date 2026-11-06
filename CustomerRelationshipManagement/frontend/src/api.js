@@ -1,49 +1,59 @@
-const BASE = 'http://localhost:8081/api';
+// Same-origin '/api' in development (Vite proxies it to the backend). Set VITE_API_URL when the API lives elsewhere.
+const BASE = import.meta.env.VITE_API_URL || '/api';
 
-let authHeader = sessionStorage.getItem('auth') || '';
-
-export const isLoggedIn = () => !!authHeader;
-
+// Authentication is an HttpOnly session cookie set by the server; no password or token is kept in the browser.
+// Only the (non-secret) profile of the signed-in user is cached for display.
 export const getUser = () => {
   try { return JSON.parse(sessionStorage.getItem('user')); } catch { return null; }
 };
+export const isLoggedIn = () => !!getUser();
 
-export function logout() {
-  authHeader = '';
-  sessionStorage.removeItem('auth');
-  sessionStorage.removeItem('user');
+const csrfToken = () => {
+  const m = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+};
+
+async function send(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { 'Content-Type': 'application/json' };
+  if (method !== 'GET') headers['X-XSRF-TOKEN'] = csrfToken();
+  return fetch(BASE + path, { ...options, method, headers, credentials: 'include' });
+}
+
+async function errorMessage(res) {
+  let msg = `Request failed (${res.status})`;
+  try {
+    const body = await res.json();
+    if (body.message) msg = body.message;
+    else if (body.detail) msg = body.detail;
+  } catch { /* ignore */ }
+  return msg;
+}
+
+const clearLocal = () => sessionStorage.removeItem('user');
+
+export async function logout() {
+  clearLocal();
+  try { await send('/auth/logout', { method: 'POST' }); } catch { /* already signed out */ }
 }
 
 export async function login(username, password) {
-  const header = 'Basic ' + btoa(`${username}:${password}`);
-  const res = await fetch(`${BASE}/me`, { headers: { Authorization: header } });
-  if (!res.ok) throw new Error('Invalid username or password');
+  if (!csrfToken()) await send('/auth/csrf');
+  const res = await send('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+  if (!res.ok) throw new Error(res.status === 403 ? 'Please reload the page and try again' : await errorMessage(res));
   const user = await res.json();
-  authHeader = header;
-  sessionStorage.setItem('auth', header);
   sessionStorage.setItem('user', JSON.stringify(user));
   return user;
 }
 
 async function request(path, options = {}) {
-  const res = await fetch(BASE + path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-  });
+  const res = await send(path, options);
   if (res.status === 401) {
-    logout();
+    clearLocal();
     window.location.reload();
     throw new Error('Session expired');
   }
-  if (!res.ok) {
-    let msg = `Request failed (${res.status})`;
-    try {
-      const body = await res.json();
-      if (body.message) msg = body.message;
-      else if (body.detail) msg = body.detail;
-    } catch { /* ignore */ }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw new Error(await errorMessage(res));
   return res.status === 204 ? null : res.json();
 }
 
@@ -64,6 +74,8 @@ export const dealsApi = crud('deals');
 export const activitiesApi = crud('activities');
 export const usersApi = crud('users');
 export const rolesApi = crud('roles');
+export const productsApi = crud('products');
+export const tasksApi = crud('tasks');
 export const tenantsApi = {
   list: () => request('/admin/tenants'),
   details: (id) => request(`/admin/tenants/${id}/details`),

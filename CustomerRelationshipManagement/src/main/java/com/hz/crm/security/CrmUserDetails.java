@@ -15,6 +15,11 @@ public class CrmUserDetails extends User {
 	private final Long tenantId;
 	private final Role role;
 	private final String fullName;
+	/**
+	 * The password hash at login time. Kept (unlike the erasable password) so that a later password change can be
+	 * detected and older sessions ended. It is a hash and only lives in the server-side session.
+	 */
+	private final String passwordStamp;
 
 	public CrmUserDetails(Long id, String username, String passwordHash, boolean enabled, Long tenantId, Role role,
 			String fullName) {
@@ -24,8 +29,10 @@ public class CrmUserDetails extends User {
 		this.tenantId = tenantId;
 		this.role = role;
 		this.fullName = fullName;
+		this.passwordStamp = passwordHash;
 	}
 
+	public String getPasswordStamp() { return passwordStamp; }
 	public Long getId() { return id; }
 	public Long getTenantId() { return tenantId; }
 	public Role getRole() { return role; }

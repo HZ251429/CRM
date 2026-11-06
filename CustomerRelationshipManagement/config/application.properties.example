@@ -1,0 +1,4 @@
+# Copy to config/application.properties (git-ignored) and fill in, or set the matching environment variables.
+spring.datasource.password=change-me
+# Only used when the database has no super admin yet; leave empty to have one generated and logged once.
+crm.superadmin.password=

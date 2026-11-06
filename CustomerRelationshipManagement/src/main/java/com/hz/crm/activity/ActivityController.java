@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.hz.crm.customer.CustomerRepository;
+import com.hz.crm.product.ProductRepository;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
 
@@ -20,8 +21,11 @@ public class ActivityController {
 	private final ActivityRepository repository;
 	private final CustomerRepository customers;
 	private final AccessService access;
+	private final ProductRepository products;
 
-	public ActivityController(ActivityRepository repository, CustomerRepository customers, AccessService access) {
+	public ActivityController(ActivityRepository repository, CustomerRepository customers, AccessService access,
+			ProductRepository products) {
+		this.products = products;
 		this.repository = repository;
 		this.customers = customers;
 		this.access = access;
@@ -38,6 +42,25 @@ public class ActivityController {
 		}
 	}
 
+	/**
+	 * A sale needs both a product of this tenant and a number of units. Inactive products cannot be used for new
+	 * sales, but an existing entry may keep the product it already has.
+	 */
+	private void checkSale(Activity activity, Scope s, Long currentProductId) {
+		if (activity.getProductId() == null) {
+			activity.setUnitsSold(null);
+			return;
+		}
+		if (activity.getUnitsSold() == null) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter the number of units sold");
+		}
+		var product = products.findById(activity.getProductId()).filter(p -> s.tenantId().equals(p.getTenantId()))
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown product"));
+		if (!product.isActive() && !product.getId().equals(currentProductId)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This product is inactive");
+		}
+	}
+
 	@GetMapping
 	public List<Activity> list(@RequestParam(required = false) Long customerId) {
 		Scope s = access.scope();
@@ -50,6 +73,7 @@ public class ActivityController {
 	public Activity create(@Valid @RequestBody Activity activity) {
 		Scope s = access.scope();
 		checkCustomer(activity.getCustomerId(), s);
+		checkSale(activity, s, null);
 		activity.setId(null);
 		if (activity.getActivityTime() == null) {
 			activity.setActivityTime(java.time.LocalDateTime.now());
@@ -67,12 +91,18 @@ public class ActivityController {
 			return ResponseEntity.notFound().build();
 		}
 		checkCustomer(activity.getCustomerId(), s);
+		checkSale(activity, s, a.getProductId());
 		a.setCustomerId(activity.getCustomerId());
+		a.setProductId(activity.getProductId());
+		a.setUnitsSold(activity.getUnitsSold());
 		a.setType(activity.getType());
 		a.setSubject(activity.getSubject());
+		a.setAttendees(activity.getAttendees());
 		a.setNotes(activity.getNotes());
-		a.setActivityTime(activity.getActivityTime());
-		a.setCompleted(activity.isCompleted());
+		a.setOutcome(activity.getOutcome());
+		if (activity.getActivityTime() != null) {
+			a.setActivityTime(activity.getActivityTime());
+		}
 		return ResponseEntity.ok(repository.save(a));
 	}
 

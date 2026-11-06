@@ -176,7 +176,7 @@ export default function Tenants() {
               onChange={(e) => setForm({ ...form, adminUsername: e.target.value })} required />
             <span className="suffix">@{form.code || 'CODE'}</span>
           </span>
-          <input name="adminSecret" type="password" minLength={6} placeholder="Admin password (min 6)"
+          <input name="adminSecret" type="password" minLength={8} maxLength={72} placeholder="Admin password (min 8)"
             value={form.adminPassword} autoComplete="new-password"
             onChange={(e) => setForm({ ...form, adminPassword: e.target.value })} required />
           <button type="submit">Create tenant</button>

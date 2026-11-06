@@ -2,15 +2,22 @@ package com.hz.crm.activity;
 
 import java.time.LocalDateTime;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
+/** A log entry about an interaction with a customer: a meeting, call, visit, email or note. */
 @Entity
 @Table(name = "activities")
 public class Activity {
@@ -22,17 +29,46 @@ public class Activity {
 	@NotNull
 	private Long customerId;
 
-	/** CALL, EMAIL, MEETING, TASK, NOTE */
-	private String type = "TASK";
+	/** MEETING, CALL, VISIT, EMAIL, NOTE (TASK kept for older entries) */
+	@Pattern(regexp = "MEETING|CALL|VISIT|EMAIL|NOTE|TASK", message = "Unknown activity type")
+	private String type = "MEETING";
 
+	/** short title of the entry */
 	@NotBlank
+	@Size(max = 200)
 	private String subject;
 
+	/** who took part, free text, e.g. "Ravi (CFO), Priya" */
+	@Size(max = 500)
+	@Column(length = 500)
+	private String attendees;
+
+	/**
+	 * what was discussed. 2000 matches the existing column; ddl-auto=update cannot widen it, so a longer limit needs
+	 * a migration.
+	 */
+	@Size(max = 2000)
 	@Column(length = 2000)
 	private String notes;
 
-	/** when the activity happened / is scheduled; set to "now" automatically when not provided */
+	/** decisions and follow-up actions */
+	@Size(max = 2000)
+	@Column(length = 2000)
+	private String outcome;
+
+	/** optional sale recorded with this activity: which product ... */
+	private Long productId;
+
+	/** ... and how many units of it were sold; counts toward sales tasks for that product */
+	@Min(1)
+	@Max(1_000_000)
+	private Integer unitsSold;
+
+	/** when it happened; set to "now" automatically when not provided */
 	private LocalDateTime activityTime;
+
+	/** legacy column from the old task list; no longer used, kept so existing rows and the NOT NULL column stay valid */
+	@JsonIgnore
 	private boolean completed;
 
 	private Long tenantId;
@@ -50,10 +86,16 @@ public class Activity {
 	public void setType(String type) { this.type = type; }
 	public String getSubject() { return subject; }
 	public void setSubject(String subject) { this.subject = subject; }
+	public String getAttendees() { return attendees; }
+	public void setAttendees(String attendees) { this.attendees = attendees; }
 	public String getNotes() { return notes; }
 	public void setNotes(String notes) { this.notes = notes; }
+	public String getOutcome() { return outcome; }
+	public void setOutcome(String outcome) { this.outcome = outcome; }
+	public Long getProductId() { return productId; }
+	public void setProductId(Long productId) { this.productId = productId; }
+	public Integer getUnitsSold() { return unitsSold; }
+	public void setUnitsSold(Integer unitsSold) { this.unitsSold = unitsSold; }
 	public LocalDateTime getActivityTime() { return activityTime; }
 	public void setActivityTime(LocalDateTime activityTime) { this.activityTime = activityTime; }
-	public boolean isCompleted() { return completed; }
-	public void setCompleted(boolean completed) { this.completed = completed; }
 }

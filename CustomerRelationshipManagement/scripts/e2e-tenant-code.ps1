@@ -1,18 +1,13 @@
 $base = 'http://localhost:8081/api'
-function AuthH($u, $p) { @{ Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${u}:${p}")) } }
-function Call($method, $path, $user, $pass, $body) {
-  $req = @{ Uri = "$base$path"; Method = $method; Headers = (AuthH $user $pass); ContentType = 'application/json'; UseBasicParsing = $true }
-  if ($body) { $req.Body = ($body | ConvertTo-Json) }
-  try { $r = Invoke-WebRequest @req; if ($r.Content) { return $r.Content | ConvertFrom-Json } } catch { return "HTTP " + [int]$_.Exception.Response.StatusCode }
-}
+. "$PSScriptRoot\_session.ps1"
 $c = ('T' + (Get-Random -Maximum 9999)).Substring(0,5)
 "--- create tenant code $c"
-$t = Call POST '/admin/tenants' superadmin superadmin123 @{ name = "Co $c"; code = $c.ToLower(); adminUsername = 'boss'; adminPassword = 'secret123' }
+$t = Call POST '/admin/tenants' superadmin $SA @{ name = "Co $c"; code = $c.ToLower(); adminUsername = 'boss'; adminPassword = 'secret123' }
 "created: $($t.name) code=$($t.code)"
 "--- duplicate code (expect 409)"
-Call POST '/admin/tenants' superadmin superadmin123 @{ name = "Other $c"; code = $c; adminUsername = 'x'; adminPassword = 'secret123' }
+Call POST '/admin/tenants' superadmin $SA @{ name = "Other $c"; code = $c; adminUsername = 'x'; adminPassword = 'secret123' }
 "--- code too long (expect 400)"
-Call POST '/admin/tenants' superadmin superadmin123 @{ name = "Long $c"; code = 'ABCDEF'; adminUsername = 'x'; adminPassword = 'secret123' }
+Call POST '/admin/tenants' superadmin $SA @{ name = "Long $c"; code = 'ABCDEF'; adminUsername = 'x'; adminPassword = 'secret123' }
 "--- login without code fails (expect 401), with code works"
 Call GET '/me' 'boss' secret123
 $me = Call GET '/me' "boss@$c" secret123

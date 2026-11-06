@@ -63,7 +63,9 @@ public class DashboardController {
 		Map<String, Object> r = new LinkedHashMap<>();
 		r.put("totalCustomers", cs.size());
 		r.put("totalDeals", ds.size());
-		r.put("openActivities", as.stream().filter(a -> !a.isCompleted()).count());
+		java.time.LocalDateTime weekAgo = java.time.LocalDateTime.now().minusDays(7);
+		r.put("activitiesThisWeek",
+				as.stream().filter(a -> a.getActivityTime() != null && a.getActivityTime().isAfter(weekAgo)).count());
 		r.put("pipelineValue", pipeline);
 		r.put("wonValue", won);
 		r.put("dealsByStage", dealsByStage);
