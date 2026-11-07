@@ -22,7 +22,12 @@ public class TeamRole {
 	@Column(nullable = false)
 	private String name;
 
+	/** who introduced the role; null = company-wide (made by the admin before roles had an owner) */
+	private Long createdById;
+
 	public Long getId() { return id; }
+	public Long getCreatedById() { return createdById; }
+	public void setCreatedById(Long createdById) { this.createdById = createdById; }
 	public Long getTenantId() { return tenantId; }
 	public void setTenantId(Long tenantId) { this.tenantId = tenantId; }
 	public String getName() { return name; }

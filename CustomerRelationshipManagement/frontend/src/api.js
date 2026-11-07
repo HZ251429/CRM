@@ -75,6 +75,12 @@ export const usersApi = crud('users');
 export const rolesApi = crud('roles');
 export const productsApi = crud('products');
 export const tasksApi = crud('tasks');
+export const stockApi = {
+  list: () => request('/stock'),
+  history: (productId) => request(`/stock/${productId}/entries`),
+  add: (body) => request('/stock', { method: 'POST', body: JSON.stringify(body) }),
+  removeEntry: (id) => request(`/stock/entries/${id}`, { method: 'DELETE' }),
+};
 export const notificationsApi = {
   list: (limit = 30) => request(`/notifications?limit=${limit}`),
   read: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),

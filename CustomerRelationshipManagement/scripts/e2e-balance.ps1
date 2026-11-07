@@ -24,9 +24,12 @@ Call POST '/tasks' "lead@$c" $pw @{ parentId = $t.id; assigneeId = $rb.id; units
 Bal 'split 30 to A, 40 to B (expect 30)'
 Call POST '/activities' "ra@$c" $pw @{ customerId = $cuA.id; subject = 's1'; productId = $prod.id; unitsSold = 10; saleAmount = 1000 } | Out-Null
 Bal 'A sells 10 (expect lead 30, A 20)'
-Call POST '/activities' "ra@$c" $pw @{ customerId = $cuA.id; subject = 's2'; productId = $prod.id; unitsSold = 25; saleAmount = 2500 } | Out-Null
-Bal 'A sells 25 more: 5 over own 30 (expect lead 25)'
+"A tries to sell 25 with only 20 left (expect HTTP 400): " + (Call POST '/activities' "ra@$c" $pw @{ customerId = $cuA.id; subject = 's2'; productId = $prod.id; unitsSold = 25; saleAmount = 2500 })
+Call POST '/activities' "ra@$c" $pw @{ customerId = $cuA.id; subject = 's2'; productId = $prod.id; unitsSold = 20; saleAmount = 2000 } | Out-Null
+Bal 'A sells the remaining 20 (expect lead 30, A 0)'
 Call POST '/activities' "lead@$c" $pw @{ customerId = $cuL.id; subject = 's3'; productId = $prod.id; unitsSold = 5; saleAmount = 500 } | Out-Null
-Bal 'lead sells 5 (expect lead 20)'
+Bal 'lead sells 5 (expect lead 25)'
+"lead tries 26 with 25 left (expect HTTP 400): " + (Call POST '/activities' "lead@$c" $pw @{ customerId = $cuL.id; subject = 's4'; productId = $prod.id; unitsSold = 26; saleAmount = 500 })
+"Rep B sells a product with no task (expect HTTP 400): " + (Call POST '/activities' "rb@$c" $pw @{ customerId = $cuA.id; subject = 'x'; productId = (Call POST '/products' $a $pw @{ name = 'Other'; unit = 'pcs' }).id; unitsSold = 1; saleAmount = 10 })
 $team = (Call GET '/dashboard/team' $a $pw) | ForEach-Object { $_ } | ForEach-Object { "$($_.fullName)=$($_.unitsBalance)" }
-"team overview balances: " + ($team -join ', ') + "  (expect Lead=20, Rep A=0, Rep B=40)"
+"team overview balances: " + ($team -join ', ') + "  (expect Lead=25, Rep A=0, Rep B=40)"

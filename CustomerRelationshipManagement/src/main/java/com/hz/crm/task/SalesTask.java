@@ -48,6 +48,12 @@ public class SalesTask {
 	@Column(nullable = false)
 	private LocalDateTime createdAt;
 
+	/** true when the task's units were taken from stock (tasks the admin creates); null for tasks made before stock */
+	private Boolean fromStock;
+
+	public boolean isFromStock() { return Boolean.TRUE.equals(fromStock); }
+	public void setFromStock(boolean fromStock) { this.fromStock = fromStock; }
+
 	@PrePersist
 	void onCreate() {
 		createdAt = LocalDateTime.now();

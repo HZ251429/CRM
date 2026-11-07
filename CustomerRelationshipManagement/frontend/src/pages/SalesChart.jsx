@@ -32,7 +32,11 @@ function labelOf(key, period, long = false) {
 }
 
 /** Single-series column chart of sales per day / month, with hover tooltip and a table view. */
-export default function SalesChart({ points, metric, period, onBarClick }) {
+/**
+ * Column chart of sales per day / month. With showTeam, each column is stacked: the user's own sales at the bottom
+ * (amber) and their team's on top (indigo), with a 2px gap between the two.
+ */
+export default function SalesChart({ points, metric, period, onBarClick, showTeam = false, emptyText = '' }) {
   const wrap = useRef(null);
   const [width, setWidth] = useState(640);
   const [hover, setHover] = useState(null);
@@ -45,6 +49,8 @@ export default function SalesChart({ points, metric, period, onBarClick }) {
   }, []);
 
   const value = (p) => Number(metric === 'amount' ? p.amount : p.units);
+  const mineOf = (p) => (showTeam ? Number(metric === 'amount' ? p.amountMine : p.unitsMine) || 0 : value(p));
+  const teamOf = (p) => Math.max(0, value(p) - mineOf(p));
   const fmtVal = (v) => (metric === 'amount' ? money(v) : `${Number(v).toLocaleString('en-IN')} units`);
   const axis = ticks(Math.max(0, ...points.map(value)));
   const top = axis[axis.length - 1];
@@ -55,23 +61,33 @@ export default function SalesChart({ points, metric, period, onBarClick }) {
   const y = (v) => PAD.top + plotH - (v / top) * plotH;
   const labelEvery = period === 'month' ? 5 : 1;
   const total = points.reduce((n, p) => n + value(p), 0);
+  const totalMine = points.reduce((n, p) => n + mineOf(p), 0);
+  const rangeName = period === 'week' ? 'the last 7 days' : period === 'month' ? 'the last 30 days' : 'the last 12 months';
 
-  // rounded 4px data-end, square at the baseline
-  const bar = (x, v) => {
-    const h = Math.max(0, (v / top) * plotH);
-    if (h <= 0) return null;
-    const r = Math.min(4, h, barW / 2);
-    const b = PAD.top + plotH;
-    const t = b - h;
+  // a segment from height "from" to "to" (in data units); only the top segment gets the 4px rounded data-end
+  const seg = (x, from, to, roundTop) => {
+    const b = PAD.top + plotH - (from / top) * plotH;
+    const t = PAD.top + plotH - (to / top) * plotH;
+    const h = b - t;
+    if (h <= 0.5) return null;
+    const r = roundTop ? Math.min(4, h, barW / 2) : 0;
     return `M${x},${b} V${t + r} Q${x},${t} ${x + r},${t} H${x + barW - r} Q${x + barW},${t} ${x + barW},${t + r} V${b} Z`;
   };
+  const GAP = 2 * (top / plotH); // 2px surface gap between the stacked segments, in data units
 
   const hp = hover != null ? points[hover] : null;
   const hx = hover != null ? PAD.left + slot * hover + slot / 2 : 0;
 
   return (
     <div className="chart">
+      {showTeam && (
+        <div className="chart-legend">
+          <span><i className="sw sw-me" /> Me <strong>{fmtVal(totalMine)}</strong></span>
+          <span><i className="sw sw-team" /> Team <strong>{fmtVal(total - totalMine)}</strong></span>
+        </div>
+      )}
       <div className="chart-wrap" ref={wrap} onMouseLeave={() => setHover(null)}>
+        {total === 0 && <div className="chart-empty">{emptyText || `No sales in ${rangeName}.`}</div>}
         <svg width={width} height={H} role="img"
           aria-label={`Sales ${metric === 'amount' ? 'amount' : 'units'} per ${period === 'year' ? 'month' : 'day'}, total ${fmtVal(total)}`}>
           {axis.map((t) => (
@@ -84,10 +100,15 @@ export default function SalesChart({ points, metric, period, onBarClick }) {
           ))}
           {points.map((p, i) => {
             const x = PAD.left + slot * i + (slot - barW) / 2;
-            const d = bar(x, value(p));
+            const mine = mineOf(p);
+            const teamPart = teamOf(p);
+            const dMine = seg(x, 0, mine, teamPart <= 0);
+            const dTeam = teamPart > 0 ? seg(x, mine > 0 ? mine + GAP : 0, mine + teamPart, true) : null;
+            const dim = hover != null && hover !== i ? ' dim' : '';
             return (
               <g key={p.key}>
-                {d && <path d={d} className={hover == null || hover === i ? 'chart-bar' : 'chart-bar dim'} />}
+                {dMine && <path d={dMine} className={`chart-bar ${showTeam ? 'bar-me' : ''}${dim}`} />}
+                {dTeam && <path d={dTeam} className={`chart-bar bar-team${dim}`} />}}
                 {(i % labelEvery === 0 || i === points.length - 1) && (
                   <text x={PAD.left + slot * i + slot / 2} y={H - 8} textAnchor="middle" className="chart-axis">
                     {labelOf(p.key, period)}
@@ -106,8 +127,14 @@ export default function SalesChart({ points, metric, period, onBarClick }) {
         {hp && (
           <div className="chart-tip" style={{ left: Math.min(Math.max(hx, 90), width - 90), top: Math.max(0, y(value(hp)) - 8) }}>
             <strong>{labelOf(hp.key, period, true)}</strong>
-            <span>{money(hp.amount)}</span>
-            <span className="muted">{Number(hp.units).toLocaleString('en-IN')} units · {hp.deals} deal{hp.deals === 1 ? '' : 's'}</span>
+            <span>{fmtVal(value(hp))}{metric === 'amount' ? ` · ${Number(hp.units).toLocaleString('en-IN')} units` : ''}</span>
+            {showTeam && (
+              <>
+                <span className="tip-row"><i className="sw sw-me" /> Me: {fmtVal(mineOf(hp))}</span>
+                <span className="tip-row"><i className="sw sw-team" /> Team: {fmtVal(teamOf(hp))}</span>
+              </>
+            )}
+            <span className="muted">{hp.deals} deal{hp.deals === 1 ? '' : 's'}</span>
             {onBarClick && hp.deals > 0 && <span className="tip-hint">Click for details</span>}
           </div>
         )}
@@ -115,11 +142,13 @@ export default function SalesChart({ points, metric, period, onBarClick }) {
       <details className="chart-table">
         <summary>View as table</summary>
         <table>
-          <thead><tr><th>{period === 'year' ? 'Month' : 'Day'}</th><th className="num">Deals</th><th className="num">Units</th><th className="num">Amount</th></tr></thead>
+          <thead><tr><th>{period === 'year' ? 'Month' : 'Day'}</th><th className="num">Deals</th><th className="num">Units</th><th className="num">Amount</th>
+            {showTeam && <><th className="num">Me</th><th className="num">Team</th></>}</tr></thead>
           <tbody>
             {points.map((p) => (
               <tr key={p.key}><td>{labelOf(p.key, period, true)}</td><td className="num">{p.deals}</td>
-                <td className="num">{Number(p.units).toLocaleString('en-IN')}</td><td className="num">{money(p.amount)}</td></tr>
+                <td className="num">{Number(p.units).toLocaleString('en-IN')}</td><td className="num">{money(p.amount)}</td>
+                {showTeam && <><td className="num">{fmtVal(mineOf(p))}</td><td className="num">{fmtVal(teamOf(p))}</td></>}</tr>
             ))}
           </tbody>
         </table>

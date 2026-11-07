@@ -52,11 +52,14 @@ public class UserController {
 	private final AccessService access;
 	private final TenantRepository tenants;
 	private final TeamRoleRepository teamRoles;
+	private final TeamRoleService roleAccess;
 	private final SessionService sessions;
 	private final NotificationService notifications;
 
 	public UserController(AppUserRepository users, PasswordEncoder encoder, AccessService access,
-			TenantRepository tenants, TeamRoleRepository teamRoles, SessionService sessions, NotificationService notifications) {
+			TenantRepository tenants, TeamRoleRepository teamRoles, TeamRoleService roleAccess, SessionService sessions,
+			NotificationService notifications) {
+		this.roleAccess = roleAccess;
 		this.notifications = notifications;
 		this.sessions = sessions;
 		this.users = users;
@@ -76,9 +79,13 @@ public class UserController {
 				.collect(Collectors.toMap(TeamRole::getId, TeamRole::getName));
 	}
 
-	private void checkTeamRole(Long teamRoleId, Scope s) {
-		if (teamRoleId != null
-				&& teamRoles.findById(teamRoleId).filter(r -> s.tenantId().equals(r.getTenantId())).isEmpty()) {
+	/** Members may only give roles they can see (their own, their line's, their team's or company-wide ones). */
+	private void checkTeamRole(Long teamRoleId, Long currentRoleId, Scope s) {
+		if (teamRoleId == null || teamRoleId.equals(currentRoleId)) {
+			return;
+		}
+		if (teamRoles.findById(teamRoleId)
+				.filter(r -> s.tenantId().equals(r.getTenantId()) && roleAccess.canSee(r, s)).isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown role");
 		}
 	}
@@ -125,7 +132,7 @@ public class UserController {
 		}
 		Long managerId = isAdmin(s) ? req.managerId() : leadManager(req.managerId(), s);
 		checkManager(managerId, s);
-		checkTeamRole(req.teamRoleId(), s);
+		checkTeamRole(req.teamRoleId(), null, s);
 		AppUser u = new AppUser();
 		u.setUsername(login);
 		u.setPasswordHash(encoder.encode(req.password()));
@@ -171,7 +178,7 @@ public class UserController {
 						"A user cannot report to themselves or to one of their own subordinates");
 			}
 			u.setManagerId(managerId);
-			checkTeamRole(req.teamRoleId(), s);
+			checkTeamRole(req.teamRoleId(), u.getTeamRoleId(), s);
 			u.setTeamRoleId(req.teamRoleId());
 			if (req.active() != null) {
 				u.setActive(req.active());

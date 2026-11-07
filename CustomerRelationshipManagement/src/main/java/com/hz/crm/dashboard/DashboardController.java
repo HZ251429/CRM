@@ -35,6 +35,8 @@ import com.hz.crm.task.SalesTaskRepository;
 import com.hz.crm.task.TaskProgressService;
 import com.hz.crm.user.AppUser;
 import com.hz.crm.user.Role;
+import com.hz.crm.user.TeamRole;
+import com.hz.crm.user.TeamRoleRepository;
 
 /**
  * Dashboard numbers. A "deal" is an activity that recorded a sale (a product with units sold). Sales figures are
@@ -52,7 +54,9 @@ public class DashboardController {
 		}
 	}
 
-	public record Point(String key, long deals, long units, BigDecimal amount) {
+	/** one chart bucket: totals for the user and their team, and the part that is the user's own sales */
+	public record Point(String key, long deals, long units, BigDecimal amount, long dealsMine, long unitsMine,
+			BigDecimal amountMine) {
 	}
 
 	private final CustomerRepository customers;
@@ -61,9 +65,11 @@ public class DashboardController {
 	private final TaskProgressService progress;
 	private final AccessService access;
 	private final ProductRepository products;
+	private final TeamRoleRepository teamRoles;
 
 	public DashboardController(CustomerRepository customers, ActivityRepository activities, SalesTaskRepository tasks,
-			TaskProgressService progress, AccessService access, ProductRepository products) {
+			TaskProgressService progress, AccessService access, ProductRepository products, TeamRoleRepository teamRoles) {
+		this.teamRoles = teamRoles;
 		this.products = products;
 		this.customers = customers;
 		this.activities = activities;
@@ -142,9 +148,12 @@ public class DashboardController {
 		periods.put("year", Totals.of(between(sales, today.withDayOfYear(1).atStartOfDay())));
 
 		Map<String, List<Point>> series = new LinkedHashMap<>();
-		series.put("week", daily(sales, today, 7));
-		series.put("month", daily(sales, today, 30));
-		series.put("year", monthly(sales, YearMonth.from(today), 12));
+		// the chart always shows the user and their team (stacked), whatever the Only me / With team switch says
+		List<Activity> teamSales = allSales.stream()
+				.filter(a -> team.contains(a.getOwnerId()) && a.getActivityTime() != null).toList();
+		series.put("week", daily(teamSales, target, today, 7));
+		series.put("month", daily(teamSales, target, today, 30));
+		series.put("year", monthly(teamSales, target, YearMonth.from(today), 12));
 
 		Map<String, Object> r = new LinkedHashMap<>();
 		r.put("userId", target);
@@ -154,6 +163,17 @@ public class DashboardController {
 		r.put("scope", withTeam ? "team" : "me");
 		r.put("unitsAssigned", unitsAssigned);
 		r.put("unitsBalance", unitsBalance);
+		// units handed down to the team that are not sold yet: everything unsold on the user's tasks minus what is
+		// still the user's own to sell (for the admin, who sells nothing themselves, that is everything unsold)
+		long unsold = mine.stream().mapToLong(t -> Math.max(0, t.getUnits() - sold.getOrDefault(t.getId(), 0L))).sum();
+		// units sold by the user themselves and by everyone below them, always both (independent of the scope switch)
+		long soldMine = allSales.stream().filter(a -> target.equals(a.getOwnerId()) && a.getUnitsSold() != null)
+				.mapToLong(Activity::getUnitsSold).sum();
+		long soldTeam = allSales.stream().filter(a -> team.contains(a.getOwnerId()) && !target.equals(a.getOwnerId())
+				&& a.getUnitsSold() != null).mapToLong(Activity::getUnitsSold).sum();
+		r.put("unitsSoldMine", soldMine);
+		r.put("unitsSoldTeam", soldTeam);
+		r.put("unitsTeamPending", u.getRole() == Role.TENANT_ADMIN ? unsold : Math.max(0, unsold - unitsBalance));
 		r.put("unitsSplit", unitsSplit);
 		r.put("totalTasks", mine.size());
 		r.put("openTasks", mine.size() - completed);
@@ -196,24 +216,28 @@ public class DashboardController {
 		return r;
 	}
 
-	private static List<Point> daily(List<Activity> sales, LocalDate today, int days) {
+	private static Point point(String key, List<Activity> bucket, Long me) {
+		Totals all = Totals.of(bucket);
+		Totals mine = Totals.of(bucket.stream().filter(a -> me.equals(a.getOwnerId())).toList());
+		return new Point(key, all.deals(), all.units(), all.amount(), mine.deals(), mine.units(), mine.amount());
+	}
+
+	private static List<Point> daily(List<Activity> sales, Long me, LocalDate today, int days) {
 		Map<LocalDate, List<Activity>> byDay = sales.stream()
 				.collect(Collectors.groupingBy(a -> a.getActivityTime().toLocalDate()));
 		List<Point> points = new ArrayList<>();
 		for (LocalDate d = today.minusDays(days - 1L); !d.isAfter(today); d = d.plusDays(1)) {
-			Totals t = Totals.of(byDay.getOrDefault(d, List.of()));
-			points.add(new Point(d.toString(), t.deals(), t.units(), t.amount()));
+			points.add(point(d.toString(), byDay.getOrDefault(d, List.of()), me));
 		}
 		return points;
 	}
 
-	private static List<Point> monthly(List<Activity> sales, YearMonth current, int months) {
+	private static List<Point> monthly(List<Activity> sales, Long me, YearMonth current, int months) {
 		Map<YearMonth, List<Activity>> byMonth = sales.stream()
 				.collect(Collectors.groupingBy(a -> YearMonth.from(a.getActivityTime())));
 		List<Point> points = new ArrayList<>();
 		for (YearMonth m = current.minusMonths(months - 1L); !m.isAfter(current); m = m.plusMonths(1)) {
-			Totals t = Totals.of(byMonth.getOrDefault(m, List.of()));
-			points.add(new Point(m.toString(), t.deals(), t.units(), t.amount()));
+			points.add(point(m.toString(), byMonth.getOrDefault(m, List.of()), me));
 		}
 		return points;
 	}
@@ -232,6 +256,8 @@ public class DashboardController {
 				activities.findByTenantIdAndProductIdIsNotNull(s.tenantId()));
 		Map<Long, Long> ownBal = progress.ownBalance(allTasks, sold);
 		LocalDateTime weekAgo = LocalDateTime.now().minusDays(7);
+		Map<Long, String> roleNames = teamRoles.findByTenantIdOrderByNameAsc(s.tenantId()).stream()
+				.collect(Collectors.toMap(TeamRole::getId, TeamRole::getName));
 
 		List<Map<String, Object>> rows = new ArrayList<>();
 		for (AppUser u : s.tenantUsers()) {
@@ -251,6 +277,7 @@ public class DashboardController {
 			r.put("username", u.getUsername());
 			r.put("role", u.getRole());
 			r.put("managerId", u.getManagerId());
+			r.put("teamRoleName", u.getTeamRoleId() == null ? null : roleNames.get(u.getTeamRoleId()));
 			r.put("active", u.isActive());
 			r.put("totalCustomers", customerCount.getOrDefault(u.getId(), 0L));
 			r.put("totalTasks", mine.size());

@@ -70,13 +70,25 @@ public class TaskProgressService {
 	 */
 	public Map<Long, Long> soldByTask(Scope s, List<SalesTask> all, List<Activity> sales) {
 		Map<Long, Long> sold = new HashMap<>();
+		allocation(s, all, sales).forEach((taskId, parts) ->
+				sold.put(taskId, parts.values().stream().mapToLong(Long::longValue).sum()));
+		return sold;
+	}
+
+	/**
+	 * Same counting as {@link #soldByTask}, but says which sales went to each task: task id -> (activity id -> units
+	 * of that sale counted toward the task). Used to work out each task's share of the sale amounts and credit.
+	 */
+	public Map<Long, Map<Long, Long>> allocation(Scope s, List<SalesTask> all, List<Activity> sales) {
+		Map<Long, Map<Long, Long>> parts = new HashMap<>();
 		Map<String, List<SalesTask>> byPersonAndProduct = all.stream()
 				.collect(Collectors.groupingBy(t -> t.getAssignedToId() + ":" + t.getProductId()));
 		Comparator<SalesTask> oldestFirst = Comparator.comparing(SalesTask::getCreatedAt).thenComparing(SalesTask::getId);
 
 		for (List<SalesTask> group : byPersonAndProduct.values()) {
 			List<SalesTask> ordered = group.stream().sorted(oldestFirst).toList();
-			ordered.forEach(t -> sold.put(t.getId(), 0L));
+			Map<Long, Long> filled = new HashMap<>();
+			ordered.forEach(t -> { filled.put(t.getId(), 0L); parts.put(t.getId(), new java.util.LinkedHashMap<>()); });
 			Long productId = ordered.get(0).getProductId();
 			Set<Long> team = access.subtree(ordered.get(0).getAssignedToId(), s.tenantUsers());
 			List<Activity> stream = sales.stream()
@@ -93,18 +105,20 @@ public class TaskProgressService {
 						break; // this and all newer tasks did not exist yet on the day of the sale
 					}
 					newestEligible = t;
-					long room = t.getUnits() - sold.get(t.getId());
+					long room = t.getUnits() - filled.get(t.getId());
 					if (room > 0 && left > 0) {
 						long take = Math.min(room, left);
-						sold.merge(t.getId(), take, Long::sum);
+						filled.merge(t.getId(), take, Long::sum);
+						parts.get(t.getId()).merge(a.getId(), take, Long::sum);
 						left -= take;
 					}
 				}
 				if (left > 0 && newestEligible != null) {
-					sold.merge(newestEligible.getId(), left, Long::sum);
+					filled.merge(newestEligible.getId(), left, Long::sum);
+					parts.get(newestEligible.getId()).merge(a.getId(), left, Long::sum);
 				}
 			}
 		}
-		return sold;
+		return parts;
 	}
 }

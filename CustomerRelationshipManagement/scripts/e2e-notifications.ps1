@@ -9,6 +9,7 @@ $lead = Call POST '/users' $a $pw @{ username = 'lead'; password = $pw; fullName
 $rep = Call POST '/users' "lead@$c" $pw @{ username = 'rep'; password = $pw; fullName = 'Rep' }
 $peer = Call POST '/users' $a $pw @{ username = 'peer'; password = $pw; fullName = 'Peer' }
 $prod = Call POST '/products' $a $pw @{ name = 'Purifier'; unit = 'pcs' }
+Call POST '/tasks' $a $pw @{ productId = $prod.id; assigneeId = $rep.id; units = 50; title = 'Purifier drive' } | Out-Null
 function Inbox($u) {
   $r = Call GET '/notifications' "$u@$c" $pw
   "{0,-5} unread={1}: {2}" -f $u, $r.unread, ((@($r.items) | ForEach-Object { "[$($_.type)] $($_.message)" }) -join ' | ')

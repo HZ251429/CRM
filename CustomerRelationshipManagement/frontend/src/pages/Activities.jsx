@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { customersApi, activitiesApi, productsApi } from '../api.js';
+import { customersApi, activitiesApi, productsApi, tasksApi } from '../api.js';
 import { money, nowLocalInput, toLocalInput, useOwners } from '../format.js';
-import Modal, { Field, ConfirmDialog } from '../Modal.jsx';
+import Modal, { Field, ConfirmDialog, AlertDialog } from '../Modal.jsx';
 import ActivityDetail, { TYPES, typeOf, PayBadge, fmtWhen, fmtNum } from '../ActivityDetail.jsx';
+import { balanceOf } from '../TaskBits.jsx';
 
 const PICKABLE = Object.keys(TYPES).filter((t) => !TYPES[t].legacy);
 const PAGE = 50;
@@ -22,6 +23,9 @@ export default function Activities({ user }) {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
+  const [alert, setAlert] = useState(null); // { title, message } popup for errors when saving
+  const [editingSale, setEditingSale] = useState(null); // the sale being edited, to give its units back
+  const [myTasks, setMyTasks] = useState([]);
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
@@ -41,6 +45,7 @@ export default function Activities({ user }) {
     load();
     customersApi.all().then(setCustomers).catch((e) => setError(e.message));
     productsApi.list().then(setProducts).catch((e) => setError(e.message));
+    loadBalance();
   }, []);
   useEffect(() => { setLimit(PAGE); }, [search, typeFilter, ownerFilter, salesOnly, from, to]);
 
@@ -53,10 +58,11 @@ export default function Activities({ user }) {
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   // date/time defaults to now but can be changed, e.g. when logging a meeting afterwards
-  const openAdd = () => { setEditingId(null); setForm({ ...empty, activityTime: nowLocalInput() }); setFormError(''); setOpen(true); };
+  const openAdd = () => { setEditingId(null); setEditingSale(null); setForm({ ...empty, activityTime: nowLocalInput() }); setFormError(''); setOpen(true); };
   const openEdit = (a) => {
     setViewing(null);
     setEditingId(a.id);
+    setEditingSale(a.productId ? { productId: a.productId, unitsSold: a.unitsSold } : null);
     const fullyPaid = a.saleAmount == null || a.amountPaid == null || Number(a.amountPaid) >= Number(a.saleAmount);
     setForm({
       ...empty, customerId: a.customerId, type: a.type, subject: a.subject,
@@ -71,15 +77,75 @@ export default function Activities({ user }) {
   };
   const close = () => setOpen(false);
 
+  // ----- a member may only sell what is left in their own balance -----
+  const limited = user.role === 'MEMBER';
+  function loadBalance() { tasksApi.list().then((t) => setMyTasks(t.filter((x) => x.assignedToId === user.id))).catch(() => {}); }
+  const balanceFor = (productId) => {
+    const pid = Number(productId);
+    const tasks = myTasks.filter((t) => t.productId === pid);
+    let left = tasks.reduce((n, t) => n + balanceOf(t), 0);
+    if (editingSale && editingSale.productId === pid) left += Number(editingSale.unitsSold || 0);
+    return { left, hasTask: tasks.length > 0 };
+  };
+  const saleLimit = limited && form.isSale && form.productId ? balanceFor(form.productId) : null;
+  const overLimit = saleLimit && form.unitsSold !== '' && Number(form.unitsSold) > saleLimit.left;
+
+  const limitMessage = (productId, lim) => {
+    const p = productOf(productId);
+    return lim.hasTask
+      ? `You can sell at most ${lim.left} ${p?.unit || 'units'} of ${p?.name || 'this product'}. That is all that is left in your balance.`
+      : `You have no units of ${p?.name || 'this product'} to sell. Ask your lead to assign you a task for it.`;
+  };
+
+  // the units field can never hold more than the member's balance: larger numbers are cut back with an alert
+  const onUnitsChange = (e) => {
+    const v = e.target.value;
+    if (limited && form.productId && v !== '') {
+      const lim = balanceFor(form.productId);
+      if (Number(v) > lim.left) {
+        setForm({ ...form, unitsSold: lim.left > 0 ? String(lim.left) : '' });
+        setAlert({ title: 'Not enough balance', message: limitMessage(form.productId, lim) });
+        return;
+      }
+    }
+    setForm({ ...form, unitsSold: v });
+  };
+  // switching product re-checks the units already entered against that product's balance
+  const onProductChange = (e) => {
+    const pid = e.target.value;
+    const next = { ...form, productId: pid };
+    if (limited && pid && form.unitsSold !== '') {
+      const lim = balanceFor(pid);
+      if (Number(form.unitsSold) > lim.left) {
+        next.unitsSold = lim.left > 0 ? String(lim.left) : '';
+        setAlert({ title: 'Not enough balance', message: limitMessage(pid, lim) });
+      }
+    }
+    setForm(next);
+  };
+
   const credit = form.isSale && !form.fullyPaid && form.saleAmount !== ''
     ? Math.max(0, Number(form.saleAmount) - Number(form.amountPaid || 0)) : 0;
 
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
+    // errors are shown as a popup so they are seen even when the form is scrolled down to the Save button
+    const fail = (message, title = 'Could not save') => { setFormError(message); setAlert({ title, message }); };
     const sale = form.isSale;
+    if (sale && saleLimit && saleLimit.left <= 0) {
+      fail(limitMessage(form.productId, saleLimit), 'Not enough balance');
+      return;
+    }
+    if (overLimit) {
+      const p = productOf(form.productId);
+      fail(saleLimit.hasTask
+        ? `You can sell at most ${saleLimit.left} ${p?.unit || 'units'} of ${p?.name || 'this product'}. That is all that is left in your balance.`
+        : `You have no units of ${p?.name || 'this product'} to sell. Ask your lead to assign you a task for it.`, 'Not enough balance');
+      return;
+    }
     if (sale && !form.fullyPaid && Number(form.amountPaid || 0) > Number(form.saleAmount)) {
-      setFormError('Amount paid cannot be more than the total amount');
+      fail('Amount paid cannot be more than the total amount');
       return;
     }
     const body = {
@@ -95,8 +161,9 @@ export default function Activities({ user }) {
       else await activitiesApi.create(body);
       close();
       load();
+      loadBalance();
     } catch (err) {
-      setFormError(err.message);
+      fail(err.message, /balance|to sell/i.test(err.message) ? 'Not enough balance' : 'Could not save');
     }
   };
 
@@ -244,7 +311,7 @@ export default function Activities({ user }) {
       {open && (
         <Modal title={editingId ? 'Edit log entry' : 'Log activity'} onClose={close}>
           <form onSubmit={submit} autoComplete="off">
-            {formError && <p className="error">{formError}</p>}
+            {formError && <p className="error" role="alert">{formError}</p>}
             <div className="type-picker" role="radiogroup" aria-label="Type">
               {(TYPES[form.type]?.legacy ? [...PICKABLE, form.type] : PICKABLE).map((k) => (
                 <button key={k} type="button" role="radio" aria-checked={form.type === k}
@@ -283,16 +350,26 @@ export default function Activities({ user }) {
               {form.isSale && (
                 <div className="form-grid">
                   <Field label="Product">
-                    <select name="productId" value={form.productId} onChange={onChange} required>
+                    <select name="productId" value={form.productId} onChange={onProductChange} required>
                       <option value="">Select product...</option>
                       {products.filter((p) => p.active || String(p.id) === form.productId).map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
+                        <option key={p.id} value={p.id}>{p.name} ({p.unit}){limited ? ` · ${balanceFor(p.id).left} left` : ''}</option>
                       ))}
                     </select>
                   </Field>
                   <Field label={`Units sold${productOf(form.productId) ? ` (${productOf(form.productId).unit})` : ''}`}>
-                    <input name="unitsSold" type="number" min="1" step="1" max="1000000" value={form.unitsSold}
-                      onChange={onChange} required placeholder="e.g. 10" />
+                    <input name="unitsSold" type="number" min="1" step="1" value={form.unitsSold}
+                      max={saleLimit ? Math.max(saleLimit.left, 1) : 1000000}
+                      disabled={!!saleLimit && saleLimit.left <= 0}
+                      onChange={onUnitsChange} required placeholder={saleLimit && saleLimit.left <= 0 ? 'Nothing left to sell' : 'e.g. 10'}
+                      className={overLimit ? 'invalid' : ''} aria-invalid={overLimit || undefined} />
+                    {saleLimit && (
+                      <small className={overLimit || saleLimit.left === 0 ? 'balance-note over' : 'balance-note'}>
+                        {!saleLimit.hasTask ? 'No task for this product, so nothing to sell yet'
+                          : overLimit ? `Only ${saleLimit.left} left in your balance`
+                            : `Your balance: ${saleLimit.left} ${productOf(form.productId)?.unit || 'units'}`}
+                      </small>
+                    )}
                   </Field>
                   <Field label="Total deal amount (₹)">
                     <input name="saleAmount" type="number" min="0" step="0.01" value={form.saleAmount}
@@ -342,6 +419,8 @@ export default function Activities({ user }) {
           </form>
         </Modal>
       )}
+
+      {alert && <AlertDialog title={alert.title} message={alert.message} onClose={() => setAlert(null)} />}
     </div>
   );
 }

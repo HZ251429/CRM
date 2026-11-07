@@ -206,7 +206,7 @@ function TeamMembers({ user }) {
         <button type="button" onClick={expandAll}>Expand all</button>
         <button type="button" onClick={collapseAll}>Collapse all</button>
         <span className="spacer" />
-        {isAdmin && <button type="button" onClick={() => { setRoleError(''); setRolesOpen(true); }}>Manage roles</button>}
+<button type="button" onClick={() => { setRoleError(''); setRolesOpen(true); }}>Manage roles</button>
         <button type="button" className="primary" onClick={() => openAdd()}>+ Add member</button>
       </div>
 
@@ -291,7 +291,7 @@ function TeamMembers({ user }) {
               </Field>
             </div>
             {roles.length === 0 && (
-              <p className="muted hint">{isAdmin ? 'No roles yet. Use "Manage roles" to create roles such as Sales Manager or Executive.' : 'No roles yet. Your admin can create roles.'}</p>
+              <p className="muted hint">{isAdmin ? 'No roles yet. Use "Manage roles" to create roles such as Sales Manager or Executive.' : 'No roles yet. Use "Manage roles" to create roles for your team.'}</p>
             )}
             <div className="modal-actions">
               <button type="button" onClick={closeMember}>Cancel</button>
@@ -309,19 +309,26 @@ function TeamMembers({ user }) {
               onChange={(e) => setNewRole(e.target.value)} required autoFocus autoComplete="off" />
             <button type="submit" className="primary">Add role</button>
           </form>
+          <p className="muted hint">{isAdmin
+            ? 'Roles you create can be used across the company. You can rename or delete any role.'
+            : 'Roles you create can be used by you, the people above you and everyone in your team. You can change only the roles you created.'}</p>
           <table>
-            <thead><tr><th>Role</th><th>Members</th><th></th></tr></thead>
+            <thead><tr><th>Role</th><th>Created by</th><th className="num">Members</th><th></th></tr></thead>
             <tbody>
               {roles.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.name}</td><td>{r.memberCount}</td>
+                  <td>{r.name}</td>
+                  <td className="muted">{r.createdById === user.id ? 'You' : r.createdByName}</td>
+                  <td className="num">{r.memberCount}</td>
                   <td>
-                    <button className="plain" onClick={() => renameRole(r)}>Rename</button>
-                    <button className="plain" onClick={() => deleteRole(r)}>Delete</button>
+                    {r.canEdit && <>
+                      <button className="plain" onClick={() => renameRole(r)}>Rename</button>
+                      <button className="plain" onClick={() => deleteRole(r)}>Delete</button>
+                    </>}
                   </td>
                 </tr>
               ))}
-              {roles.length === 0 && <tr><td colSpan="3" className="muted">No roles yet</td></tr>}
+              {roles.length === 0 && <tr><td colSpan="4" className="muted">No roles yet</td></tr>}
             </tbody>
           </table>
           <div className="modal-actions">

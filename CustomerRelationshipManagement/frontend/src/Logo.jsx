@@ -4,8 +4,8 @@ export default function Logo({ size = 40, showText = true, light = false }) {
       <svg width={size} height={size} viewBox="0 0 48 48" aria-label="HZ logo">
         <defs>
           <linearGradient id="hzg" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#6366f1" />
-            <stop offset="1" stopColor="#a855f7" />
+            <stop offset="0" style={{ stopColor: 'var(--primary)' }} />
+            <stop offset="1" style={{ stopColor: 'var(--primary-2)' }} />
           </linearGradient>
         </defs>
         <rect width="48" height="48" rx="12" fill="url(#hzg)" />

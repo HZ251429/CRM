@@ -10,6 +10,11 @@ import org.springframework.web.server.ResponseStatusException;
 import com.hz.crm.customer.CustomerRepository;
 import com.hz.crm.notification.Notification;
 import com.hz.crm.notification.NotificationService;
+import com.hz.crm.task.SalesTask;
+import com.hz.crm.task.SalesTaskRepository;
+import com.hz.crm.task.TaskProgressService;
+import com.hz.crm.user.Role;
+import java.util.Map;
 import com.hz.crm.product.ProductRepository;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
@@ -25,9 +30,14 @@ public class ActivityController {
 	private final AccessService access;
 	private final ProductRepository products;
 	private final NotificationService notifications;
+	private final SalesTaskRepository tasks;
+	private final TaskProgressService progress;
 
 	public ActivityController(ActivityRepository repository, CustomerRepository customers, AccessService access,
-			ProductRepository products, NotificationService notifications) {
+			ProductRepository products, NotificationService notifications, SalesTaskRepository tasks,
+			TaskProgressService progress) {
+		this.tasks = tasks;
+		this.progress = progress;
 		this.notifications = notifications;
 		this.products = products;
 		this.repository = repository;
@@ -73,6 +83,35 @@ public class ActivityController {
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown product"));
 		if (!product.isActive() && !product.getId().equals(currentProductId)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This product is inactive");
+		}
+		checkBalance(activity, s, product);
+	}
+
+	/**
+	 * A member may only sell what is left in their own balance for the product: the units on their tasks for it that
+	 * are not split to their team and not sold yet. When editing a sale, that sale's own units are given back first.
+	 * The admin has no tasks of their own and is not limited.
+	 */
+	private void checkBalance(Activity activity, Scope s, com.hz.crm.product.Product product) {
+		if (s.me().getRole() != Role.MEMBER) {
+			return;
+		}
+		Long me = s.me().getId();
+		List<SalesTask> all = tasks.findByTenantId(s.tenantId());
+		List<SalesTask> mine = all.stream()
+				.filter(t -> me.equals(t.getAssignedToId()) && product.getId().equals(t.getProductId())).toList();
+		long available = 0;
+		if (!mine.isEmpty()) {
+			List<Activity> otherSales = repository.findByTenantIdAndProductIdIsNotNull(s.tenantId()).stream()
+					.filter(a -> activity.getId() == null || !activity.getId().equals(a.getId())).toList();
+			Map<Long, Long> own = progress.ownBalance(all, progress.soldByTask(s, all, otherSales));
+			available = mine.stream().mapToLong(t -> own.getOrDefault(t.getId(), 0L)).sum();
+		}
+		if (activity.getUnitsSold() > available) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, mine.isEmpty()
+					? "You have no units of " + product.getName() + " to sell. Ask your lead to assign you a task for it."
+					: "You can sell at most " + available + " " + product.getUnit() + " of " + product.getName()
+							+ ". That is all that is left in your balance.");
 		}
 	}
 
@@ -135,6 +174,7 @@ public class ActivityController {
 			return ResponseEntity.notFound().build();
 		}
 		checkCustomer(activity.getCustomerId(), s);
+		activity.setId(a.getId()); // so the balance check gives this sale's own units back
 		checkSale(activity, s, a.getProductId());
 		a.setCustomerId(activity.getCustomerId());
 		a.setProductId(activity.getProductId());

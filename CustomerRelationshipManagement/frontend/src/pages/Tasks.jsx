@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { productsApi, tasksApi } from '../api.js';
+import { productsApi, tasksApi, stockApi } from '../api.js';
 import { fmtDateTime, useOwners } from '../format.js';
 import Modal, { Field, ConfirmDialog } from '../Modal.jsx';
 import { STATUS, StatusBadge, balanceOf, teamBalanceOf, taskName } from '../TaskBits.jsx';
@@ -62,7 +62,14 @@ export default function Tasks({ user }) {
   const [toDelete, setToDelete] = useState(null);
 
   const [loaded, setLoaded] = useState(false);
-  const load = () => tasksApi.list().then((t) => { setTasks(t); setLoaded(true); return t; }).catch((e) => setError(e.message));
+  const [stock, setStock] = useState({}); // admin only: productId -> stock row
+  const loadStock = () => {
+    if (!isMember) stockApi.list().then((rows) => setStock(Object.fromEntries(rows.map((r) => [r.productId, r])))).catch(() => {});
+  };
+  const load = () => {
+    loadStock();
+    return tasksApi.list().then((t) => { setTasks(t); setLoaded(true); return t; }).catch((e) => setError(e.message));
+  };
   useEffect(() => {
     load();
     productsApi.list().then(setProducts).catch((e) => setError(e.message));
@@ -71,6 +78,19 @@ export default function Tasks({ user }) {
 
   const assignees = team.filter((t) => t.userId !== me && t.role === 'MEMBER' && t.active);
   const isLeader = assignees.length > 0;
+  // assignee picker: people in reporting order (each person followed by those under them), role in brackets
+  const assigneeTree = (() => {
+    const ids = new Set(assignees.map((a) => a.userId));
+    const kids = {};
+    assignees.forEach((a) => { const p = ids.has(a.managerId) ? a.managerId : 'root'; (kids[p] ||= []).push(a); });
+    Object.values(kids).forEach((l) => l.sort((x, y) => x.fullName.localeCompare(y.fullName)));
+    const out = [];
+    const walk = (key, depth) => (kids[key] || []).forEach((a) => { out.push({ ...a, depth }); walk(a.userId, depth + 1); });
+    walk('root', 0);
+    return out;
+  })();
+  const assigneeLabel = (a) => '    '.repeat(a.depth) + (a.depth ? '└ ' : '')
+    + a.fullName + (a.teamRoleName ? ` (${a.teamRoleName})` : '');
   const activeProducts = products.filter((p) => p.active);
   const person = (id, name) => (id === me ? 'You' : name);
   const set = (k, v) => setF({ ...f, [k]: v });
@@ -112,7 +132,8 @@ export default function Tasks({ user }) {
 
   // ----- actions -----
   const openNew = () => {
-    setForm({ assigneeId: '', productId: '', units: '', title: '', assignedOn: new Date() });
+    loadStock();
+    setForm({ assigneeId: '', productId: '', sourceId: '', units: '', title: '', assignedOn: new Date() });
     setFormError('');
     setModal({ mode: 'new' });
   };
@@ -138,8 +159,9 @@ export default function Tasks({ user }) {
         await tasksApi.update(modal.task.id, { units: Number(form.units), title: form.title });
       } else {
         await tasksApi.create({
-          parentId: modal.mode === 'split' ? modal.task.id : null,
-          productId: modal.mode === 'new' ? Number(form.productId) : null,
+          // members create tasks out of one of their own tasks (their balance); the admin creates them from stock
+          parentId: modal.mode === 'split' ? modal.task.id : isMember ? Number(form.sourceId) : null,
+          productId: modal.mode === 'new' && !isMember ? Number(form.productId) : null,
           assigneeId: Number(form.assigneeId),
           units: Number(form.units),
           title: form.title,
@@ -165,7 +187,27 @@ export default function Tasks({ user }) {
     }
   };
 
-  const left = (t) => t.units - t.splitUnits;
+  // units the assignee can still hand out: not handed to the team and not sold by them yet
+  const left = (t) => t.ownBalance;
+  const stockLeft = (productId) => Math.max(0, stock[productId]?.left ?? 0);
+  const sources = mine.filter((t) => left(t) > 0); // a member's tasks they can hand units out of
+  // most units the form may ask for, and a line saying why
+  const cap = (() => {
+    if (!modal) return null;
+    if (modal.mode === 'split') return { max: left(modal.task), text: `${fmt(left(modal.task))} ${modal.task.unit} left with you to hand out` };
+    if (modal.mode === 'edit') {
+      const t = modal.task;
+      const extra = t.parentId ? left(byId[t.parentId] || { ownBalance: 0 }) : stockLeft(t.productId);
+      return { max: t.units + extra, text: `You can raise this by up to ${fmt(extra)} ${t.unit} (${t.parentId ? 'your balance on the task' : 'stock left'})` };
+    }
+    if (isMember) {
+      const src = byId[form.sourceId];
+      return src ? { max: left(src), text: `${fmt(left(src))} ${src.unit} left with you on this task` } : null;
+    }
+    const p = stock[form.productId];
+    return form.productId ? { max: stockLeft(form.productId), text: `${fmt(stockLeft(form.productId))} ${p?.unit || 'units'} left in stock` } : null;
+  })();
+  const overLimit = cap && form.units !== '' && Number(form.units) > cap.max;
 
   return (
     <div>
@@ -392,7 +434,7 @@ export default function Tasks({ user }) {
                 <Field label="Assign to">
                   <select name="assigneeId" value={form.assigneeId} onChange={onChange} required autoFocus={modal.mode === 'split'}>
                     <option value="">Select team member...</option>
-                    {assignees.map((a) => <option key={a.userId} value={a.userId}>{a.fullName}</option>)}
+                    {assigneeTree.map((a) => <option key={a.userId} value={a.userId}>{assigneeLabel(a)}</option>)}
                   </select>
                 </Field>
               )}
@@ -401,22 +443,46 @@ export default function Tasks({ user }) {
                   <input value={fmtDateTime(form.assignedOn)} readOnly tabIndex={-1} className="readonly" />
                 </Field>
               )}
-              {modal.mode === 'new' && (
+              {modal.mode === 'new' && !isMember && (
                 <Field label="Product">
                   <select name="productId" value={form.productId} onChange={onChange} required>
                     <option value="">Select product...</option>
-                    {activeProducts.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                    {activeProducts.map((p) => (
+                      <option key={p.id} value={p.id} disabled={stockLeft(p.id) <= 0}>
+                        {p.name} - {stockLeft(p.id) > 0 ? `${fmt(stockLeft(p.id))} ${p.unit} in stock` : 'no stock left'}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              {modal.mode === 'new' && isMember && (
+                <Field label="Units come from my task">
+                  <select name="sourceId" value={form.sourceId} onChange={onChange} required>
+                    <option value="">Select one of your tasks...</option>
+                    {sources.map((t) => (
+                      <option key={t.id} value={t.id}>{taskName(t)} - {t.productName}, {fmt(left(t))} {t.unit} left</option>
+                    ))}
                   </select>
                 </Field>
               )}
               <Field label="Units">
                 <input name="units" type="number" min="1" step="1" required value={form.units} onChange={onChange}
-                  max={modal.mode === 'split' ? left(modal.task) : 1000000} />
+                  max={cap ? Math.max(1, cap.max) : 1000000} className={overLimit ? 'invalid' : ''}
+                  disabled={!!cap && cap.max <= 0} />
+                {cap && <span className={overLimit || cap.max <= 0 ? 'balance-note over' : 'balance-note'}>
+                  {overLimit ? `Too many: only ${fmt(cap.max)} available. ` : ''}{cap.text}
+                </span>}
               </Field>
             </div>
+            {modal.mode === 'new' && !isMember && activeProducts.every((p) => stockLeft(p.id) <= 0) && (
+              <p className="muted hint">No stock left for any product. Add stock in the Stock section first.</p>
+            )}
+            {modal.mode === 'new' && isMember && sources.length === 0 && (
+              <p className="muted hint">You have no units left to hand out. Tasks you create come out of your own balance.</p>
+            )}
             <div className="modal-actions">
               <button type="button" onClick={() => setModal(null)}>Cancel</button>
-              <button type="submit" className="primary">
+              <button type="submit" className="primary" disabled={overLimit || (!!cap && cap.max <= 0)}>
                 {modal.mode === 'edit' ? 'Save' : modal.mode === 'split' ? 'Assign part' : 'Create task'}
               </button>
             </div>

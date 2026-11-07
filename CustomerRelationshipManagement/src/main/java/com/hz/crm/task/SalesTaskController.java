@@ -29,6 +29,7 @@ import com.hz.crm.product.Product;
 import com.hz.crm.product.ProductRepository;
 import com.hz.crm.security.AccessService;
 import com.hz.crm.security.AccessService.Scope;
+import com.hz.crm.stock.StockService;
 import com.hz.crm.task.TaskProgressService.Status;
 import com.hz.crm.user.AppUser;
 import com.hz.crm.user.Role;
@@ -51,7 +52,13 @@ public class SalesTaskController {
 			int units, Long assignedToId, String assignedToName, Long assignedById, String assignedByName,
 			LocalDateTime createdAt, int splitUnits, int subTaskCount, long soldUnits, Status status,
 			/** units of the whole task still unsold (team included) */ long teamBalance,
-			/** units still to be sold by the assignee themselves, after units split to the team */ long ownBalance) {
+			/** units still to be sold by the assignee themselves, after units split to the team */ long ownBalance,
+			/** this task's share of the sale amounts and of the credit still owed, by units counted toward it */
+			java.math.BigDecimal salesAmount, java.math.BigDecimal creditAmount,
+			/** the sales (activities) that count toward this task */ List<Long> dealIds,
+			/** of soldUnits, the units the assignee sold themselves (the rest was sold by their team) */ long soldByAssignee,
+			/** units of each sale (activity id -> units) that count toward this task */ Map<Long, Long> dealUnits,
+			/** the task's units were taken from stock */ boolean fromStock) {
 	}
 
 	public record CreateTaskRequest(Long parentId, Long productId, @NotNull Long assigneeId,
@@ -66,9 +73,11 @@ public class SalesTaskController {
 	private final ActivityRepository activities;
 	private final AccessService access;
 	private final TaskProgressService progress;
+	private final StockService stock;
 
 	public SalesTaskController(SalesTaskRepository tasks, ProductRepository products, ActivityRepository activities,
-			AccessService access, TaskProgressService progress) {
+			AccessService access, TaskProgressService progress, StockService stock) {
+		this.stock = stock;
 		this.progress = progress;
 		this.tasks = tasks;
 		this.products = products;
@@ -96,8 +105,11 @@ public class SalesTaskController {
 				.collect(Collectors.toMap(Product::getId, Function.identity()));
 		Map<Long, List<SalesTask>> children = all.stream().filter(t -> t.getParentId() != null)
 				.collect(Collectors.groupingBy(SalesTask::getParentId));
-		Map<Long, Long> soldByTask = progress.soldByTask(s, all,
-				activities.findByTenantIdAndProductIdIsNotNull(s.tenantId()));
+		List<Activity> sales = activities.findByTenantIdAndProductIdIsNotNull(s.tenantId());
+		Map<Long, Map<Long, Long>> parts = progress.allocation(s, all, sales);
+		Map<Long, Long> soldByTask = new java.util.HashMap<>();
+		parts.forEach((id, p) -> soldByTask.put(id, p.values().stream().mapToLong(Long::longValue).sum()));
+		Map<Long, Activity> saleById = sales.stream().collect(Collectors.toMap(Activity::getId, Function.identity()));
 		Map<Long, Long> own = progress.ownBalance(all, soldByTask);
 
 		return selected.stream().map(t -> {
@@ -110,8 +122,34 @@ public class SalesTaskController {
 					t.getAssignedToId(), name(users.get(t.getAssignedToId())), t.getAssignedById(),
 					name(users.get(t.getAssignedById())), t.getCreatedAt(),
 					kids.stream().mapToInt(SalesTask::getUnits).sum(), kids.size(), sold, status,
-					Math.max(0, t.getUnits() - sold), own.getOrDefault(t.getId(), 0L));
+					Math.max(0, t.getUnits() - sold), own.getOrDefault(t.getId(), 0L),
+					share(parts.get(t.getId()), saleById, Activity::getSaleAmount),
+					share(parts.get(t.getId()), saleById, Activity::getCreditAmount),
+					parts.getOrDefault(t.getId(), Map.of()).keySet().stream().toList(),
+					parts.getOrDefault(t.getId(), Map.of()).entrySet().stream()
+							.filter(e -> saleById.containsKey(e.getKey()) && t.getAssignedToId().equals(saleById.get(e.getKey()).getOwnerId()))
+							.mapToLong(Map.Entry::getValue).sum(),
+					parts.getOrDefault(t.getId(), Map.of()), t.isFromStock());
 		}).toList();
+	}
+
+	/** Sum of a money field over the sales counted toward a task, in proportion to the units counted from each sale. */
+	private static java.math.BigDecimal share(Map<Long, Long> parts, Map<Long, Activity> saleById,
+			Function<Activity, java.math.BigDecimal> field) {
+		java.math.BigDecimal total = java.math.BigDecimal.ZERO;
+		if (parts == null) {
+			return total;
+		}
+		for (Map.Entry<Long, Long> e : parts.entrySet()) {
+			Activity a = saleById.get(e.getKey());
+			java.math.BigDecimal value = a == null ? null : field.apply(a);
+			if (value == null || a.getUnitsSold() == null || a.getUnitsSold() == 0) {
+				continue;
+			}
+			total = total.add(value.multiply(java.math.BigDecimal.valueOf(e.getValue()))
+					.divide(java.math.BigDecimal.valueOf(a.getUnitsSold()), 2, java.math.RoundingMode.HALF_UP));
+		}
+		return total;
 	}
 
 	private static String name(AppUser u) {
@@ -131,6 +169,22 @@ public class SalesTaskController {
 
 	private static int unitsOf(List<SalesTask> list, Long excludeId) {
 		return list.stream().filter(t -> !t.getId().equals(excludeId)).mapToInt(SalesTask::getUnits).sum();
+	}
+
+	/** Units of each task still with its assignee: not handed to their team and not sold by them yet (task id -> units). */
+	private Map<Long, Long> ownBalances(Scope s) {
+		List<SalesTask> all = tasks.findByTenantId(s.tenantId());
+		return progress.ownBalance(all,
+				progress.soldByTask(s, all, activities.findByTenantIdAndProductIdIsNotNull(s.tenantId())));
+	}
+
+	private void checkStock(Scope s, Product p, int extraUnits) {
+		long left = stock.level(s.tenantId(), p.getId()).left();
+		if (extraUnits > left) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, left <= 0
+					? "No " + p.getName() + " stock left to assign. Add stock in the Stock section first."
+					: "Only " + left + " " + p.getUnit() + " of " + p.getName() + " are left in stock");
+		}
 	}
 
 	private static String title(String title) {
@@ -163,10 +217,11 @@ public class SalesTaskController {
 			if (!me.equals(parent.getAssignedToId())) {
 				throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You can only split tasks assigned to you");
 			}
-			int left = parent.getUnits() - unitsOf(tasks.findByParentId(parent.getId()), null);
+			long left = ownBalances(s).getOrDefault(parent.getId(), 0L);
 			if (req.units() > left) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-						"Only " + left + " unit(s) of this task are left to split");
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, left == 0
+						? "You have no units left on this task to hand out"
+						: "You have only " + left + " unit(s) left on this task (not sold or handed out yet)");
 			}
 			t.setParentId(parent.getId());
 			t.setProductId(parent.getProductId());
@@ -174,6 +229,10 @@ public class SalesTaskController {
 				t.setTitle(parent.getTitle());
 			}
 		} else {
+			if (s.me().getRole() != Role.TENANT_ADMIN) {
+				// members hand out units from their own balance, so the task must come out of one of their tasks
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose which of your tasks the units come from");
+			}
 			if (t.getTitle() == null) {
 				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a title for the task");
 			}
@@ -185,6 +244,8 @@ public class SalesTaskController {
 			if (!p.isActive()) {
 				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This product is inactive");
 			}
+			checkStock(s, p, req.units());
+			t.setFromStock(true);
 			t.setProductId(p.getId());
 		}
 		return view(s, tasks.save(t));
@@ -197,17 +258,24 @@ public class SalesTaskController {
 		if (!s.me().getId().equals(t.getAssignedById())) {
 			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only the person who assigned this task can change it");
 		}
-		int split = unitsOf(tasks.findByParentId(t.getId()), null);
-		if (req.units() < split) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-					split + " unit(s) are already split to the team; units cannot be lower than that");
+		Map<Long, Long> own = ownBalances(s);
+		// units already handed to the team or sold by the assignee cannot be taken back
+		long used = t.getUnits() - own.getOrDefault(t.getId(), 0L);
+		if (req.units() < used) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, used
+					+ " unit(s) are already handed to the team or sold; units cannot be lower than that");
 		}
-		if (t.getParentId() != null) {
-			SalesTask parent = tasks.findById(t.getParentId()).orElseThrow();
-			int left = parent.getUnits() - unitsOf(tasks.findByParentId(parent.getId()), t.getId());
-			if (req.units() > left) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-						"Only " + left + " unit(s) of the parent task are available");
+		int extra = req.units() - t.getUnits();
+		if (extra > 0) {
+			if (t.getParentId() != null) {
+				long left = own.getOrDefault(t.getParentId(), 0L);
+				if (extra > left) {
+					throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "You can add at most " + left
+							+ " more unit(s); that is all you have left on your task");
+				}
+			} else if (t.isFromStock()) {
+				Product p = products.findById(t.getProductId()).orElseThrow();
+				checkStock(s, p, extra);
 			}
 		}
 		t.setUnits(req.units());

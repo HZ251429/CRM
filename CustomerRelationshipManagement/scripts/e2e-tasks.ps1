@@ -59,8 +59,9 @@ Call PUT "/tasks/$($s1.id)" "asst@$c" $pw @{ units = 20 } | Out-Null
 $s4 = Call POST '/tasks' "asst@$c" $pw @{ parentId = $t.id; assigneeId = $rep1.id; units = 10 }
 function Show($id) { $x = (Call GET '/tasks' $a $pw) | ForEach-Object { $_ } | Where-Object id -eq $id; "  task $id ($($x.assignedToName)): $($x.soldUnits)/$($x.units) $($x.status)" }
 Show $s1.id; Show $s4.id
-"--- rep1 sells 10 more -> expect first 20/20, second 15/10 (surplus on the newest task); parent 65/80"
-Call POST '/activities' "rep1@$c" $pw @{ customerId = $cu1.id; type = 'VISIT'; subject = 'More'; productId = $prod.id; unitsSold = 10; saleAmount = 10000 } | Out-Null
+"--- rep1 has 5 left: selling 10 is refused (400), selling 5 -> first 20/20, second 10/10; parent 60/80"
+Call POST '/activities' "rep1@$c" $pw @{ customerId = $cu1.id; type = 'VISIT'; subject = 'More'; productId = $prod.id; unitsSold = 10; saleAmount = 10000 }
+Call POST '/activities' "rep1@$c" $pw @{ customerId = $cu1.id; type = 'VISIT'; subject = 'More'; productId = $prod.id; unitsSold = 5; saleAmount = 5000 } | Out-Null
 Show $s1.id; Show $s4.id; Show $t.id
 "--- delete parent with sub-tasks (409); deactivated product cannot be sold (400)"
 Call DELETE "/tasks/$($t.id)" $a $pw
