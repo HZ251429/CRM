@@ -35,10 +35,11 @@ public interface ActivityRepository extends JpaRepository<Activity, Long>, JpaSp
 			+ " from Activity a where a.tenantId = ?1 and a.ownerId in ?2 and a.customerId in ?3 group by a.customerId")
 	List<Object[]> statsByCustomer(Long tenantId, Collection<Long> owners, Collection<Long> customerIds);
 
-	/** Activities logged per owner since a time: [ownerId, count]. */
-	@Query("select a.ownerId, count(a) from Activity a where a.tenantId = ?1 and a.ownerId in ?2 and a.activityTime > ?3"
-			+ " group by a.ownerId")
-	List<Object[]> countByOwnerSince(Long tenantId, Collection<Long> owners, java.time.LocalDateTime since);
+	/** Activities logged per owner in [from, to): [ownerId, count]. */
+	@Query("select a.ownerId, count(a) from Activity a where a.tenantId = ?1 and a.ownerId in ?2"
+			+ " and a.activityTime >= ?3 and a.activityTime < ?4 group by a.ownerId")
+	List<Object[]> countByOwnerBetween(Long tenantId, Collection<Long> owners, java.time.LocalDateTime from,
+			java.time.LocalDateTime to);
 
 	/** Per tenant: [tenantId, activities, activities since the time, last activity time]. */
 	@Query("select a.tenantId, count(a), sum(case when a.activityTime > ?1 then 1 else 0 end), max(a.activityTime)"

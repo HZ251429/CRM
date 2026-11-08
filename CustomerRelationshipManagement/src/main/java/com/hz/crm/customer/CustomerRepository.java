@@ -35,4 +35,10 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 
 	/** Customers per owner: [ownerId, count]. */
 	@Query("select c.ownerId, count(c) from Customer c where c.tenantId = ?1 and c.ownerId in ?2 group by c.ownerId")
-	List<Object[]> countByOwner(Long tenantId, Collection<Long> owners);}
+	List<Object[]> countByOwner(Long tenantId, Collection<Long> owners);
+
+	/** Customers added per owner in [from, to): [ownerId, count]. */
+	@Query("select c.ownerId, count(c) from Customer c where c.tenantId = ?1 and c.ownerId in ?2"
+			+ " and c.createdAt >= ?3 and c.createdAt < ?4 group by c.ownerId")
+	List<Object[]> countByOwnerBetween(Long tenantId, Collection<Long> owners, java.time.LocalDateTime from,
+			java.time.LocalDateTime to);}

@@ -247,17 +247,26 @@ public class DashboardController {
 		return points;
 	}
 
-	/** One row per visible user (self + everyone below) with that user's own numbers. */
+	/**
+	 * One row per visible user (self + everyone below) with that user's own numbers. With from/to (days, both
+	 * included) the numbers cover that period: tasks assigned, sales and activities in it, and customers added in it.
+	 * Without them everything is counted.
+	 */
 	@GetMapping("/team")
-	public List<Map<String, Object>> team() {
+	public List<Map<String, Object>> team(@RequestParam(required = false) LocalDate from,
+			@RequestParam(required = false) LocalDate to) {
 		Scope s = access.scope();
 		Set<Long> owners = s.ownerIds();
+		LocalDateTime start = from == null ? LocalDateTime.of(1900, 1, 1, 0, 0) : from.atStartOfDay();
+		LocalDateTime end = to == null ? LocalDateTime.of(9999, 1, 1, 0, 0) : to.plusDays(1).atStartOfDay();
+		java.util.function.Predicate<LocalDateTime> inPeriod = t -> t != null && !t.isBefore(start) && t.isBefore(end);
 		// counted in the database: no need to load every customer and activity of the team
 		Map<Long, Long> customerCount = new java.util.HashMap<>();
-		customers.countByOwner(s.tenantId(), owners).forEach(row -> customerCount.put((Long) row[0], (Long) row[1]));
-		LocalDateTime weekAgo = LocalDateTime.now().minusDays(7);
-		Map<Long, Long> weekCount = new java.util.HashMap<>();
-		activities.countByOwnerSince(s.tenantId(), owners, weekAgo).forEach(row -> weekCount.put((Long) row[0], (Long) row[1]));
+		customers.countByOwnerBetween(s.tenantId(), owners, start, end)
+				.forEach(row -> customerCount.put((Long) row[0], (Long) row[1]));
+		Map<Long, Long> activityCount = new java.util.HashMap<>();
+		activities.countByOwnerBetween(s.tenantId(), owners, start, end)
+				.forEach(row -> activityCount.put((Long) row[0], (Long) row[1]));
 		List<Activity> teamSales = s.me().getRole() == Role.TENANT_ADMIN
 				? activities.findByTenantIdAndProductIdIsNotNull(s.tenantId())
 				: activities.findSales(s.tenantId(), owners);
@@ -277,9 +286,12 @@ public class DashboardController {
 			if (!owners.contains(u.getId())) {
 				continue;
 			}
-			List<Activity> ownSales = salesBy.getOrDefault(u.getId(), List.of());
+			// progress is still counted on all tasks; the period only picks which sales and tasks are shown
+			List<Activity> ownSales = salesBy.getOrDefault(u.getId(), List.of()).stream()
+					.filter(a -> inPeriod.test(a.getActivityTime())).toList();
 			List<SalesTask> mine = (u.getRole() == Role.TENANT_ADMIN ? tasksByAssigner : tasksByAssignee)
-					.getOrDefault(u.getId(), List.of()).stream().filter(tasksOf(u)).toList();
+					.getOrDefault(u.getId(), List.of()).stream().filter(tasksOf(u))
+					.filter(x -> inPeriod.test(x.getCreatedAt())).toList();
 			long open = mine.stream().filter(t -> TaskProgressService.status(t, sold.getOrDefault(t.getId(), 0L))
 					!= TaskProgressService.Status.COMPLETED).count();
 			Totals t = Totals.of(ownSales);
@@ -302,7 +314,7 @@ public class DashboardController {
 			r.put("unitsSold", t.units());
 			r.put("salesAmount", t.amount());
 			r.put("creditOutstanding", ownSales.stream().map(a -> nz(a.getCreditAmount())).reduce(BigDecimal.ZERO, BigDecimal::add));
-			r.put("activitiesThisWeek", weekCount.getOrDefault(u.getId(), 0L));
+			r.put("activities", activityCount.getOrDefault(u.getId(), 0L));
 			rows.add(r);
 		}
 		return rows;

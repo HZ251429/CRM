@@ -934,3 +934,13 @@ button.dcard.dcard-btn:hover { border-color: var(--primary); }
 .picker-list li .muted { font-size: .8rem; }
 .picker-list li.active { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .picker-list li.picker-empty { cursor: default; }
+
+/* job role shown next to a member in the team overview */
+.role-chip { display: inline-block; padding: .12rem .55rem; border-radius: 999px; font-size: .78rem; font-weight: 600; white-space: nowrap; color: var(--primary-strong); background: color-mix(in srgb, var(--primary) 12%, transparent); }
+[data-theme='dark'] .role-chip { color: var(--primary-light); background: color-mix(in srgb, var(--primary) 22%, transparent); }
+
+/* period filter above the team overview */
+.team-filter { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin: 0 0 .9rem; }
+.team-filter .date-range { display: inline-flex; align-items: center; gap: .4rem; }
+.team-filter-note { font-size: .85rem; }
+.table-scroll.is-loading { opacity: .55; transition: opacity .15s; }

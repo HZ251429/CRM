@@ -107,4 +107,5 @@ export const tenantsApi = {
 };
 export const getDashboard = (userId, scope = 'me') =>
   request(`/dashboard?scope=${scope}${userId ? `&userId=${userId}` : ''}`);
-export const getTeam = () => request('/dashboard/team');
+/** Team overview rows; with from/to (yyyy-mm-dd, both included) the numbers cover only that period. */
+export const getTeam = (from = '', to = '') => request(`/dashboard/team${from || to ? `?${qs({ from, to })}` : ''}`);
