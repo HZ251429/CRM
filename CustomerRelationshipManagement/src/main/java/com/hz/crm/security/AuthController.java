@@ -40,7 +40,8 @@ import jakarta.validation.constraints.Size;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-	public record LoginRequest(@NotBlank @Size(max = 100) String username, @NotBlank @Size(max = 200) String password) {
+	/** username = what the person typed to identify themselves: username, email address or mobile number */
+	public record LoginRequest(@NotBlank @Size(max = 254) String username, @NotBlank @Size(max = 200) String password) {
 	}
 
 	private final AuthenticationManager authenticationManager;
@@ -48,9 +49,12 @@ public class AuthController {
 	private final SessionAuthenticationStrategy sessionStrategy;
 	private final LoginAttemptService attempts;
 	private final MeController me;
+	private final com.hz.crm.user.LoginIdentifiers identifiers;
 
 	public AuthController(AuthenticationManager authenticationManager, SecurityContextRepository contextRepository,
-			CookieCsrfTokenRepository csrfRepository, LoginAttemptService attempts, MeController me) {
+			CookieCsrfTokenRepository csrfRepository, LoginAttemptService attempts, MeController me,
+			com.hz.crm.user.LoginIdentifiers identifiers) {
+		this.identifiers = identifiers;
 		this.authenticationManager = authenticationManager;
 		this.contextRepository = contextRepository;
 		CsrfAuthenticationStrategy csrfStrategy = new CsrfAuthenticationStrategy(csrfRepository);
@@ -81,7 +85,10 @@ public class AuthController {
 	@PostMapping("/login")
 	public Map<String, Object> login(@Valid @RequestBody LoginRequest req, HttpServletRequest request,
 			HttpServletResponse response) {
-		String username = req.username().trim();
+		String input = req.username().trim();
+		// failed attempts count per account, however it is named (username, email or mobile), so switching between
+		// them gives no extra guesses
+		String username = identifiers.find(input).map(com.hz.crm.user.AppUser::getUsername).orElse(input);
 		String ip = request.getRemoteAddr();
 		attempts.checkAllowed(username, ip);
 		Authentication auth;
@@ -93,7 +100,7 @@ public class AuthController {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "This account or its company is disabled");
 		} catch (AuthenticationException e) {
 			attempts.failed(username, ip);
-			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid sign-in details or password");
 		}
 		attempts.succeeded(username);
 

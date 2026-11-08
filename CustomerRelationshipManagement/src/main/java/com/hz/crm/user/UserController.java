@@ -36,15 +36,17 @@ import jakarta.validation.constraints.Size;
 public class UserController {
 
 	public record UserView(Long id, String username, String fullName, Role role, Long managerId, boolean active,
-			Long teamRoleId, String teamRoleName) {
+			Long teamRoleId, String teamRoleName, String email, String mobile) {
 	}
 
 	public record CreateUserRequest(@NotBlank String username, @NotBlank @Size(min = 8, max = 72) String password,
-			@NotBlank String fullName, Long managerId, Long teamRoleId) {
+			@NotBlank String fullName, Long managerId, Long teamRoleId, @Size(max = 254) String email,
+			@Size(max = 25) String mobile) {
 	}
 
+	/** email / mobile: null = leave as is, empty = remove */
 	public record UpdateUserRequest(String fullName, Long managerId, Long teamRoleId, Boolean active,
-			String password) {
+			String password, @Size(max = 254) String email, @Size(max = 25) String mobile) {
 	}
 
 	private final AppUserRepository users;
@@ -55,10 +57,12 @@ public class UserController {
 	private final TeamRoleService roleAccess;
 	private final SessionService sessions;
 	private final NotificationService notifications;
+	private final LoginIdentifiers identifiers;
 
 	public UserController(AppUserRepository users, PasswordEncoder encoder, AccessService access,
 			TenantRepository tenants, TeamRoleRepository teamRoles, TeamRoleService roleAccess, SessionService sessions,
-			NotificationService notifications) {
+			NotificationService notifications, LoginIdentifiers identifiers) {
+		this.identifiers = identifiers;
 		this.roleAccess = roleAccess;
 		this.notifications = notifications;
 		this.sessions = sessions;
@@ -71,7 +75,8 @@ public class UserController {
 
 	public static UserView view(AppUser u, Map<Long, String> roleNames) {
 		return new UserView(u.getId(), u.getUsername(), u.getFullName(), u.getRole(), u.getManagerId(), u.isActive(),
-				u.getTeamRoleId(), u.getTeamRoleId() == null ? null : roleNames.get(u.getTeamRoleId()));
+				u.getTeamRoleId(), u.getTeamRoleId() == null ? null : roleNames.get(u.getTeamRoleId()), u.getEmail(),
+				u.getMobile());
 	}
 
 	private Map<Long, String> roleNames(Long tenantId) {
@@ -133,7 +138,12 @@ public class UserController {
 		Long managerId = isAdmin(s) ? req.managerId() : leadManager(req.managerId(), s);
 		checkManager(managerId, s);
 		checkTeamRole(req.teamRoleId(), null, s);
+		String email = LoginIdentifiers.normalizeEmail(req.email());
+		String mobile = LoginIdentifiers.normalizeMobile(req.mobile());
+		identifiers.checkFree(email, mobile, null);
 		AppUser u = new AppUser();
+		u.setEmail(email);
+		u.setMobile(mobile);
 		u.setUsername(login);
 		u.setPasswordHash(encoder.encode(req.password()));
 		u.setFullName(req.fullName().trim());
@@ -170,6 +180,11 @@ public class UserController {
 		if (req.fullName() != null && !req.fullName().isBlank()) {
 			u.setFullName(req.fullName().trim());
 		}
+		String email = req.email() == null ? u.getEmail() : LoginIdentifiers.normalizeEmail(req.email());
+		String mobile = req.mobile() == null ? u.getMobile() : LoginIdentifiers.normalizeMobile(req.mobile());
+		identifiers.checkFree(email, mobile, u.getId());
+		u.setEmail(email);
+		u.setMobile(mobile);
 		if (u.getRole() == Role.MEMBER) {
 			checkManager(managerId, s);
 			Set<Long> subtree = access.subtree(u.getId(), s.tenantUsers());

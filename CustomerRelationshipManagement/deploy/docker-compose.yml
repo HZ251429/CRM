@@ -1,0 +1,67 @@
+# Production stack: PostgreSQL + Spring Boot backend + Caddy (HTTPS, frontend, /api proxy).
+# Run from this folder on the server:   docker compose up -d --build
+# Settings come from deploy/.env (copy .env.example to .env and fill it in).
+name: crm
+
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: crm
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in deploy/.env}
+    volumes:
+      # PostgreSQL 18 images keep their data under /var/lib/postgresql/<version>
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # no published port: only the backend can reach the database
+
+  app:
+    build: ..
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/crm
+      DB_USERNAME: crm
+      DB_PASSWORD: ${DB_PASSWORD}
+      # only used on the very first start, to create the super admin
+      CRM_SUPERADMIN_USERNAME: ${CRM_SUPERADMIN_USERNAME:-superadmin}
+      CRM_SUPERADMIN_PASSWORD: ${CRM_SUPERADMIN_PASSWORD:?Set CRM_SUPERADMIN_PASSWORD in deploy/.env}
+      CRM_CORS_ORIGINS: https://${DOMAIN:?Set DOMAIN in deploy/.env}
+      # the browser talks HTTPS to Caddy; trust Caddy's X-Forwarded-* headers so cookies are marked Secure
+      FORWARD_HEADERS: native
+      SESSION_COOKIE_SECURE: "true"
+      # creates/extends tables on start; see deploy/README.md before changing
+      DDL_AUTO: ${DDL_AUTO:-update}
+      JAVA_OPTS: ${JAVA_OPTS:--Xmx768m -XX:+ExitOnOutOfMemoryError}
+      TZ: ${TZ:-Asia/Kolkata}
+    # no published port: only Caddy can reach the backend
+
+  web:
+    build: ../frontend
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

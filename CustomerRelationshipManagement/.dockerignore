@@ -1,0 +1,12 @@
+# keep the backend build context small and free of secrets
+target/
+frontend/
+scripts/
+deploy/
+config/application.properties
+.env
+.git
+.settings
+.classpath
+.project
+*.log

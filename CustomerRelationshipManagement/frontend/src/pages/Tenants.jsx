@@ -4,7 +4,7 @@ import { fmtDateTime, money } from '../format.js';
 import Icon from '../Icon.jsx';
 import { StatusBadge } from '../TaskBits.jsx';
 
-const empty = { name: '', code: '', adminFullName: '', adminUsername: '', adminPassword: '' };
+const empty = { name: '', code: '', adminFullName: '', adminUsername: '', adminPassword: '', adminEmail: '', adminMobile: '' };
 const fmt = (n) => Number(n || 0).toLocaleString('en-IN');
 const rupees = (n) => Number(n || 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 export const lastSeen = (t) => (t ? fmtDateTime(t) : 'No activity yet');
@@ -215,6 +215,11 @@ export default function Tenants() {
           <input name="adminSecret" type="password" minLength={8} maxLength={72} placeholder="Admin password (min 8)"
             value={form.adminPassword} autoComplete="new-password"
             onChange={(e) => setForm({ ...form, adminPassword: e.target.value })} required />
+          <input name="adminEmail" type="email" placeholder="Admin email (optional)" maxLength={254} value={form.adminEmail}
+            autoComplete="off" onChange={(e) => setForm({ ...form, adminEmail: e.target.value })} />
+          <input name="adminMobile" type="tel" placeholder="Admin mobile (optional)" maxLength={25} value={form.adminMobile}
+            autoComplete="off" pattern="[+0-9 ()\-.]{7,25}" title="Digits, with or without country code"
+            onChange={(e) => setForm({ ...form, adminMobile: e.target.value })} />
           <button type="submit">Create tenant</button>
         </form>
       )}

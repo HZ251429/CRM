@@ -944,3 +944,9 @@ button.dcard.dcard-btn:hover { border-color: var(--primary); }
 .team-filter .date-range { display: inline-flex; align-items: center; gap: .4rem; }
 .team-filter-note { font-size: .85rem; }
 .table-scroll.is-loading { opacity: .55; transition: opacity .15s; }
+
+/* "Reports to" in the team list: the manager's name, highlighted */
+.manager-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .14rem .6rem .14rem .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; white-space: nowrap; color: var(--primary-strong); background: color-mix(in srgb, var(--primary) 12%, transparent); border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent); }
+.manager-chip::before { content: '↑'; font-weight: 700; opacity: .7; }
+.manager-chip.me { color: var(--me); background: color-mix(in srgb, var(--me) 12%, transparent); border-color: color-mix(in srgb, var(--me) 28%, transparent); }
+[data-theme='dark'] .manager-chip { color: var(--primary-light); }

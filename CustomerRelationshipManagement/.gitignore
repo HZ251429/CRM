@@ -35,3 +35,7 @@ build/
 ### Local secrets ###
 /config/application.properties
 .env
+
+### Deployment ###
+deploy/.env
+deploy/backups/

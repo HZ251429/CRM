@@ -1,0 +1,42 @@
+{
+	# used by Let's Encrypt for certificate notices
+	email {$ACME_EMAIL}
+}
+
+# Caddy gets and renews the HTTPS certificate for this domain automatically.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# the API goes to the Spring Boot backend; same address as the page, so login cookies just work
+	handle /api/* {
+		reverse_proxy app:8081
+	}
+
+	# everything else is the React app
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	# built files have a hash in their name, so browsers may keep them for a year
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	@html path / /index.html
+	header @html Cache-Control "no-cache"
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+# Optional: send www.<domain> to the main address. Only enable this after adding a DNS record for www,
+# otherwise Caddy keeps trying (and failing) to get a certificate for it.
+# www.{$DOMAIN} {
+# 	redir https://{$DOMAIN}{uri} permanent
+# }

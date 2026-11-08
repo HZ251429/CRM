@@ -3,7 +3,9 @@ import { usersApi, rolesApi } from '../api.js';
 import Modal, { Field } from '../Modal.jsx';
 import TeamOverview from './TeamOverview.jsx';
 
-const emptyMember = { username: '', fullName: '', password: '', managerId: '', teamRoleId: '' };
+const emptyMember = { username: '', fullName: '', password: '', managerId: '', teamRoleId: '', email: '', mobile: '' };
+/** stored as country code + number, e.g. 919876543210 -> +91 98765 43210 */
+const showMobile = (m) => (m && m.length === 12 && m.startsWith('91') ? `+91 ${m.slice(2, 7)} ${m.slice(7)}` : m ? `+${m}` : '');
 
 /** Team section: each person sees only themselves and the people below them, and can add members under them. */
 export default function Team({ user }) {
@@ -87,10 +89,14 @@ function TeamMembers({ user }) {
   if (root) walk(root, 0);
 
   const nameOf = (id) => users.find((u) => u.id === id)?.fullName;
+  // people without a manager report to the company admin
+  const companyAdmin = users.find((u) => u.role === 'TENANT_ADMIN');
   const managerLabel = (u) => {
-    if (u.role === 'TENANT_ADMIN') return '-';
-    if (!isAdmin && u.id === user.id) return '-'; // a lead's own manager is outside their view
-    return u.managerId && nameOf(u.managerId) ? nameOf(u.managerId) : 'Admin';
+    if (u.role === 'TENANT_ADMIN') return <span className="muted">—</span>;
+    if (!isAdmin && u.id === user.id) return <span className="muted">—</span>; // a lead's own manager is outside their view
+    const id = u.managerId && nameOf(u.managerId) ? u.managerId : companyAdmin?.id;
+    const name = id ? nameOf(id) : 'Admin';
+    return <span className={id === user.id ? 'manager-chip me' : 'manager-chip'}>{name}{id === user.id ? ' (me)' : ''}</span>;
   };
 
   // ----- members -----
@@ -108,7 +114,7 @@ function TeamMembers({ user }) {
   };
   const openEdit = (u) => {
     setForm({ ...emptyMember, fullName: u.fullName || '', managerId: u.managerId ? String(u.managerId) : '',
-      teamRoleId: u.teamRoleId ? String(u.teamRoleId) : '' });
+      teamRoleId: u.teamRoleId ? String(u.teamRoleId) : '', email: u.email || '', mobile: showMobile(u.mobile) });
     setFormError('');
     setMemberModal({ editing: u });
   };
@@ -123,9 +129,9 @@ function TeamMembers({ user }) {
     try {
       const editing = memberModal.editing;
       if (editing) {
-        await usersApi.update(editing.id, { fullName: form.fullName, managerId, teamRoleId, active: editing.active });
+        await usersApi.update(editing.id, { fullName: form.fullName, managerId, teamRoleId, active: editing.active, email: form.email, mobile: form.mobile });
       } else {
-        await usersApi.create({ username: form.username, password: form.password, fullName: form.fullName, managerId, teamRoleId });
+        await usersApi.create({ username: form.username, password: form.password, fullName: form.fullName, managerId, teamRoleId, email: form.email, mobile: form.mobile });
         if (managerId) setExpanded(new Set([...expanded, managerId]));
       }
       closeMember();
@@ -211,7 +217,7 @@ function TeamMembers({ user }) {
       </div>
 
       <table className="tree">
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Reports to</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Sign-in</th><th>Role</th><th>Reports to</th><th>Status</th><th></th></tr></thead>
         <tbody>
           {rows.map(({ u, depth }) => {
             const kids = children[u.id] || [];
@@ -230,7 +236,7 @@ function TeamMembers({ user }) {
                     {kids.length > 0 && <span className="count-pill" title="Members under this person">{countAll(u.id)}</span>}
                   </div>
                 </td>
-                <td>{u.username}</td>
+                <td className="two-line"><span>{u.username}</span>{(u.email || u.mobile) && <span className="muted">{[u.email, showMobile(u.mobile)].filter(Boolean).join(' · ')}</span>}</td>
                 <td>{u.role === 'TENANT_ADMIN' ? <span className="badge on">Admin</span> : (u.teamRoleName || <span className="muted">-</span>)}</td>
                 <td>{managerLabel(u)}</td>
                 <td><span className={u.active ? 'badge on' : 'badge off'}>{u.active ? 'Active' : 'Inactive'}</span></td>
@@ -277,6 +283,14 @@ function TeamMembers({ user }) {
                   </Field>
                 </>
               )}
+              <Field label="Email (optional, can be used to sign in)">
+                <input name="email" type="email" value={form.email} onChange={onChange} maxLength={254} autoComplete="off"
+                  placeholder="name@company.com" />
+              </Field>
+              <Field label="Mobile (optional, can be used to sign in)">
+                <input name="mobile" type="tel" value={form.mobile} onChange={onChange} maxLength={25} autoComplete="off"
+                  placeholder="98765 43210" pattern="[+0-9 ()\-.]{7,25}" title="Digits, with or without country code" />
+              </Field>
               <Field label="Role">
                 <select name="teamRoleId" value={form.teamRoleId} onChange={onChange}>
                   <option value="">No role</option>
@@ -285,7 +299,7 @@ function TeamMembers({ user }) {
               </Field>
               <Field label="Reports to">
                 <select name="managerId" value={form.managerId} onChange={onChange}>
-                  {isAdmin && <option value="">Admin</option>}
+                  {isAdmin && <option value="">{companyAdmin ? `${companyAdmin.fullName} (Admin)` : 'Admin'}</option>}
                   {managerOptions.map((m) => <option key={m.id} value={m.id}>{m.fullName}</option>)}
                 </select>
               </Field>

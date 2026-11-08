@@ -34,9 +34,10 @@ export default function Login({ onSuccess }) {
           <h1>Welcome back</h1>
           <p className="muted">Sign in to your HZ CRM account</p>
           {error && <div className="alert">{error}</div>}
-          <label>Username
-            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="name@CODE" autoComplete="username" required />
-            <span className="muted small left">Use <b>name@tenantcode</b>, e.g. mike@ACME</span>
+          <label>Username, email or mobile
+            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="mike@ACME, mike@acme.com or 98765 43210"
+              autoComplete="username" autoCapitalize="none" spellCheck={false} required maxLength={254} />
+            <span className="muted small left">Your username (<b>name@tenantcode</b>), or the email or mobile number on your account</span>
           </label>
           <label>Password
             <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />

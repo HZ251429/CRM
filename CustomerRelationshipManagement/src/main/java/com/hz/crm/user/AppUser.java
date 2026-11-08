@@ -26,6 +26,14 @@ public class AppUser {
 
 	private String fullName;
 
+	/** optional; another way to sign in, unique across all companies; stored in lower case */
+	@Column(unique = true, length = 254)
+	private String email;
+
+	/** optional; another way to sign in, unique across all companies; stored as digits with country code */
+	@Column(unique = true, length = 20)
+	private String mobile;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false)
 	private Role role;
@@ -48,6 +56,10 @@ public class AppUser {
 	public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
 	public String getFullName() { return fullName; }
 	public void setFullName(String fullName) { this.fullName = fullName; }
+	public String getEmail() { return email; }
+	public void setEmail(String email) { this.email = email; }
+	public String getMobile() { return mobile; }
+	public void setMobile(String mobile) { this.mobile = mobile; }
 	public Role getRole() { return role; }
 	public void setRole(Role role) { this.role = role; }
 	public Long getTenantId() { return tenantId; }

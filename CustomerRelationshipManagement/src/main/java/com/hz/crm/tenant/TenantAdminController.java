@@ -70,7 +70,8 @@ public class TenantAdminController {
 	}
 
 	public record CreateTenantRequest(@NotBlank String name, @NotBlank @Size(max = 5) String code,
-			@NotBlank String adminUsername, @NotBlank @Size(min = 8, max = 72) String adminPassword, String adminFullName) {
+			@NotBlank String adminUsername, @NotBlank @Size(min = 8, max = 72) String adminPassword, String adminFullName,
+			@Size(max = 254) String adminEmail, @Size(max = 25) String adminMobile) {
 	}
 
 	public record ActiveRequest(boolean active) {
@@ -91,11 +92,13 @@ public class TenantAdminController {
 	private final PasswordEncoder encoder;
 	private final TeamRoleRepository teamRoles;
 	private final com.hz.crm.activity.ActivitySearch activitySearch;
+	private final com.hz.crm.user.LoginIdentifiers identifiers;
 
 	public TenantAdminController(TenantRepository tenants, AppUserRepository users, CustomerRepository customers,
 			ActivityRepository activities, ProductRepository products, SalesTaskRepository tasks,
 			TaskProgressService progress, AccessService access, PasswordEncoder encoder, TeamRoleRepository teamRoles,
-			com.hz.crm.activity.ActivitySearch activitySearch) {
+			com.hz.crm.activity.ActivitySearch activitySearch, com.hz.crm.user.LoginIdentifiers identifiers) {
+		this.identifiers = identifiers;
 		this.activitySearch = activitySearch;
 		this.teamRoles = teamRoles;
 		this.tenants = tenants;
@@ -211,6 +214,9 @@ public class TenantAdminController {
 		if (users.existsByUsernameIgnoreCase(adminLogin)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT, "Username already exists");
 		}
+		String adminEmail = com.hz.crm.user.LoginIdentifiers.normalizeEmail(req.adminEmail());
+		String adminMobile = com.hz.crm.user.LoginIdentifiers.normalizeMobile(req.adminMobile());
+		identifiers.checkFree(adminEmail, adminMobile, null);
 		Tenant t = new Tenant();
 		t.setName(req.name().trim());
 		t.setCode(code);
@@ -223,6 +229,8 @@ public class TenantAdminController {
 				: req.adminFullName().trim());
 		admin.setRole(Role.TENANT_ADMIN);
 		admin.setTenantId(t.getId());
+		admin.setEmail(adminEmail);
+		admin.setMobile(adminMobile);
 		users.save(admin);
 		return view(t, counts());
 	}
