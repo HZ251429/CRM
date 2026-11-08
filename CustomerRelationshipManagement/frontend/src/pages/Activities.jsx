@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { customersApi, activitiesApi, productsApi, tasksApi } from '../api.js';
+import { activitiesApi, productsApi, tasksApi } from '../api.js';
+import CustomerPicker from '../CustomerPicker.jsx';
 import { money, nowLocalInput, toLocalInput, useOwners } from '../format.js';
 import Modal, { Field, ConfirmDialog, AlertDialog } from '../Modal.jsx';
 import ActivityDetail, { TYPES, typeOf, PayBadge, fmtWhen, fmtNum } from '../ActivityDetail.jsx';
@@ -9,17 +10,18 @@ const PICKABLE = Object.keys(TYPES).filter((t) => !TYPES[t].legacy);
 const PAGE = 50;
 
 const empty = {
-  customerId: '', type: 'MEETING', subject: '', attendees: '', notes: '', outcome: '', activityTime: '',
+  customerId: '', customerName: '', type: 'MEETING', subject: '', attendees: '', notes: '', outcome: '', activityTime: '',
   isSale: false, productId: '', unitsSold: '', saleAmount: '', fullyPaid: true, amountPaid: '',
 };
 
-const dayKey = (t) => (t ? String(t).slice(0, 10) : '');
 
 /** Activity log as a compact list; click a row for the full details. */
 export default function Activities({ user }) {
+  // the log is searched and paged on the server: items = pages loaded so far, result = totals of the last search
   const [items, setItems] = useState([]);
+  const [result, setResult] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [customers, setCustomers] = useState([]);
+  const [hasAny, setHasAny] = useState(true);
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(empty);
   const [editingId, setEditingId] = useState(null);
@@ -38,22 +40,25 @@ export default function Activities({ user }) {
   const [salesOnly, setSalesOnly] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [limit, setLimit] = useState(PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const load = () => activitiesApi.list().then((r) => { setItems(r); setLoaded(true); }).catch((e) => setError(e.message));
+  const params = (page) => ({ q: search.trim(), type: typeFilter, ownerId: ownerFilter, salesOnly, from, to, page, size: PAGE });
+  const anyFilter = search || typeFilter || ownerFilter || salesOnly || from || to;
+  const load = (page = 0) => activitiesApi.page(params(page)).then((r) => {
+    setResult(r);
+    setItems((old) => (page === 0 ? r.content : [...old, ...r.content]));
+    setLoaded(true);
+    if (page === 0 && !anyFilter) setHasAny(r.totalElements > 0);
+  }).catch((e) => setError(e.message));
   useEffect(() => {
-    load();
-    customersApi.all().then(setCustomers).catch((e) => setError(e.message));
     productsApi.list().then(setProducts).catch((e) => setError(e.message));
     loadBalance();
   }, []);
-  useEffect(() => { setLimit(PAGE); }, [search, typeFilter, ownerFilter, salesOnly, from, to]);
+  // filters are applied on the server; typing in the search box waits a moment before searching
+  useEffect(() => { const t = setTimeout(() => load(0), search ? 300 : 0); return () => clearTimeout(t); }, [search, typeFilter, ownerFilter, salesOnly, from, to]);
+  const loadMore = () => { setLoadingMore(true); load(result.page + 1).finally(() => setLoadingMore(false)); };
 
   const productOf = (id) => products.find((p) => p.id === Number(id));
-  const customerName = (id) => {
-    const c = customers.find((x) => x.id === id);
-    return c ? `${c.firstName} ${c.lastName}${c.company ? ` · ${c.company}` : ''}` : `Customer #${id}`;
-  };
   const memberName = (id) => (id === user.id ? `${names[id] || 'Me'} (me)` : names[id] || 'Unknown');
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
@@ -65,7 +70,7 @@ export default function Activities({ user }) {
     setEditingSale(a.productId ? { productId: a.productId, unitsSold: a.unitsSold } : null);
     const fullyPaid = a.saleAmount == null || a.amountPaid == null || Number(a.amountPaid) >= Number(a.saleAmount);
     setForm({
-      ...empty, customerId: a.customerId, type: a.type, subject: a.subject,
+      ...empty, customerId: String(a.customerId), customerName: a.customerName || '', type: a.type, subject: a.subject,
       attendees: a.attendees || '', notes: a.notes || '', outcome: a.outcome || '',
       activityTime: toLocalInput(a.activityTime),
       isSale: !!a.productId, productId: a.productId ? String(a.productId) : '',
@@ -160,7 +165,7 @@ export default function Activities({ user }) {
       if (editingId) await activitiesApi.update(editingId, body);
       else await activitiesApi.create(body);
       close();
-      load();
+      load(0);
       loadBalance();
     } catch (err) {
       fail(err.message, /balance|to sell/i.test(err.message) ? 'Not enough balance' : 'Could not save');
@@ -173,32 +178,14 @@ export default function Activities({ user }) {
     setViewing(null);
     try {
       await activitiesApi.remove(a.id);
-      load();
+      load(0);
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const q = search.trim().toLowerCase();
-  const filtered = items
-    .filter((a) => {
-      const day = dayKey(a.activityTime);
-      const haystack = [customerName(a.customerId), a.subject, a.attendees, a.notes, a.outcome, names[a.ownerId],
-        productOf(a.productId)?.name].join(' ').toLowerCase();
-      return (!q || haystack.includes(q)) &&
-        (!typeFilter || a.type === typeFilter) &&
-        (!ownerFilter || String(a.ownerId) === ownerFilter) &&
-        (!salesOnly || a.productId) &&
-        (!from || (day && day >= from)) &&
-        (!to || (day && day <= to));
-    })
-    .sort((a, b) => String(b.activityTime || '').localeCompare(String(a.activityTime || '')) || b.id - a.id);
-  const shown = filtered.slice(0, limit);
-
-  const anyFilter = search || typeFilter || ownerFilter || salesOnly || from || to;
-  const deals = filtered.filter((a) => a.productId);
-  const dealTotal = deals.reduce((n, a) => n + Number(a.saleAmount || 0), 0);
-  const creditTotal = deals.reduce((n, a) => n + Number(a.creditAmount || 0), 0);
+  const shown = items;
+  const total = result?.totalElements || 0;
   const cols = multi ? 5 : 4;
 
   return (
@@ -235,11 +222,11 @@ export default function Activities({ user }) {
         )}
       </div>
 
-      {filtered.length > 0 && (
+      {total > 0 && (
         <p className="muted log-summary">
-          {fmtNum(filtered.length)} {filtered.length === 1 ? 'entry' : 'entries'}
-          {deals.length > 0 && ` · ${deals.length} sale${deals.length > 1 ? 's' : ''} worth ${money(dealTotal)}`}
-          {creditTotal > 0 && ` · ${money(creditTotal)} on credit`}
+          {fmtNum(total)} {total === 1 ? 'entry' : 'entries'}
+          {result.sales > 0 && ` · ${fmtNum(result.sales)} sale${result.sales > 1 ? 's' : ''} worth ${money(result.saleTotal)}`}
+          {Number(result.creditTotal) > 0 && ` · ${money(result.creditTotal)} on credit`}
         </p>
       )}
 
@@ -262,7 +249,7 @@ export default function Activities({ user }) {
                     <span><span aria-hidden="true">{t.icon}</span> {a.subject}</span>
                     <span className="muted act-preview">{t.label}{(a.notes || a.outcome) ? ` · ${a.notes || a.outcome}` : ''}</span>
                   </td>
-                  <td>{customerName(a.customerId)}</td>
+                  <td>{a.customerName}</td>
                   <td className="num">
                     {a.productId ? (
                       <div className="act-sale">
@@ -274,26 +261,26 @@ export default function Activities({ user }) {
                 </tr>
               );
             })}
-            {loaded && filtered.length === 0 && (
+            {loaded && total === 0 && (
               <tr><td colSpan={cols} className="muted">
-                {items.length === 0 ? 'Nothing logged yet. Use "+ Log activity" to record a meeting, call or sale.' : 'No entries match the filters.'}
+                {!hasAny && !anyFilter ? 'Nothing logged yet. Use "+ Log activity" to record a meeting, call or sale.' : 'No entries match the filters.'}
               </td></tr>
             )}
             {!loaded && !error && <tr><td colSpan={cols} className="muted">Loading...</td></tr>}
           </tbody>
         </table>
       </div>
-      {filtered.length > shown.length && (
+      {total > shown.length && (
         <div className="more-row">
-          <span className="muted">Showing {shown.length} of {fmtNum(filtered.length)}</span>
-          <button type="button" onClick={() => setLimit(limit + PAGE)}>Show more</button>
+          <span className="muted">Showing {fmtNum(shown.length)} of {fmtNum(total)}</span>
+          <button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading...' : 'Show more'}</button>
         </div>
       )}
 
       {viewing && (
         <Modal title="Activity details" onClose={() => setViewing(null)}>
           <ActivityDetail a={viewing} memberName={memberName(viewing.ownerId)}
-            customerName={customerName(viewing.customerId)} product={productOf(viewing.productId)} />
+            customerName={viewing.customerName} product={productOf(viewing.productId)} />
           <div className="modal-actions">
             <button type="button" className="danger-outline" onClick={() => setToDelete(viewing)}>Delete</button>
             <span className="spacer" />
@@ -323,10 +310,8 @@ export default function Activities({ user }) {
             </div>
             <div className="form-grid">
               <Field label="Customer">
-                <select name="customerId" value={form.customerId} onChange={onChange} required autoFocus>
-                  <option value="">Select customer...</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.firstName} {c.lastName}{c.company ? ` (${c.company})` : ''}</option>)}
-                </select>
+                <CustomerPicker key={editingId || 'new'} value={form.customerId} initial={form.customerName} autoFocus
+                  onChange={(id, name) => setForm((f) => ({ ...f, customerId: id, customerName: name }))} />
               </Field>
               <Field label="Date and time">
                 <input name="activityTime" type="datetime-local" value={form.activityTime || ''} onChange={onChange} required />

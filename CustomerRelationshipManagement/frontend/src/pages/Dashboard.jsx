@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { activitiesApi, customersApi, getDashboard, getTeam, productsApi, stockApi, tasksApi } from '../api.js';
+import { activitiesApi, getDashboard, getTeam, productsApi, stockApi, tasksApi } from '../api.js';
 import StockTasks from '../StockTasks.jsx';
 import { money } from '../format.js';
 import Modal from '../Modal.jsx';
@@ -161,12 +161,27 @@ export default function Dashboard({ user }) {
     setError('');
     setTaskSel('');
     getDashboard(selected, 'team').then(setD).catch((e) => setError(e.message));
-    Promise.all([tasksApi.list(), activitiesApi.list(), customersApi.all(), productsApi.list()])
-      .then(([tasks, activities, customers, products]) => setData({ tasks, activities, customers, products }))
+    // sales in short form only (no notes, no customer list); full details are fetched for what a popup shows
+    Promise.all([tasksApi.list(), activitiesApi.sales(), productsApi.list()])
+      .then(([tasks, activities, products]) => setData({ tasks, activities, products }))
       .catch((e) => setError(e.message));
   }, [selected]);
 
   const openDetail = (spec) => setDetail(spec);
+
+  // full activity rows (with customer names) for the deals a popup shows, fetched on demand and kept
+  const [rowsById, setRowsById] = useState({});
+  const DEAL_ROWS = 200;
+  useEffect(() => {
+    if (!detail || !data) return;
+    const want = detail.kind === 'activityId' ? [detail.id]
+      : detail.kind === 'deals' ? dealList(detail).slice(0, DEAL_ROWS).map((a) => a.id) : [];
+    const missing = want.filter((id) => !rowsById[id]);
+    if (missing.length === 0) return;
+    activitiesApi.rows(missing)
+      .then((rows) => setRowsById((old) => ({ ...old, ...Object.fromEntries(rows.map((r) => [r.id, r])) })))
+      .catch(() => {});
+  }, [detail, data]);
 
   const names = Object.fromEntries(team.map((t) => [t.userId, t.fullName]));
   const hasPeople = team.length > 1;
@@ -276,25 +291,32 @@ export default function Dashboard({ user }) {
       onClick: () => dealsPopup({}, `Deals for ${shownTitle}`) },
   ];
 
+  // the sales behind a deals popup, newest first
+  function dealList(spec) {
+    const owners = ownerIds(spec.who);
+    const ids = spec.dealIds ? new Set(spec.dealIds) : null;
+    return (data?.activities || [])
+      .filter((a) => a.productId && a.activityTime && (ids ? ids.has(a.id) && (!spec.who || owners.has(a.ownerId)) : owners.has(a.ownerId)))
+      .filter((a) => !spec.creditOnly || Number(a.creditAmount || 0) > 0)
+      .sort((a, b) => String(b.activityTime).localeCompare(String(a.activityTime)));
+  }
+
   const renderDetail = () => {
     if (!data) return <p className="muted">Loading details...</p>;
     const productOf = (id) => data.products.find((p) => p.id === id);
-    const customerName = (id) => {
-      const c = data.customers.find((x) => x.id === id);
-      return c ? `${c.firstName} ${c.lastName}${c.company ? ` · ${c.company}` : ''}` : `Customer #${id}`;
-    };
 
     if (detail.kind === 'activityId') {
-      const a = data.activities.find((x) => x.id === detail.id);
-      if (!a) return <p className="muted">This deal is no longer available.</p>;
-      return <ActivityDetail a={a} memberName={memberName(a.ownerId)} customerName={customerName(a.customerId)} product={productOf(a.productId)} />;
+      const a = rowsById[detail.id];
+      if (!a) return <p className="muted">Loading details...</p>;
+      return <ActivityDetail a={a} memberName={memberName(a.ownerId)} customerName={a.customerName} product={productOf(a.productId)} />;
     }
 
     if (detail.kind === 'activity') {
+      const a = rowsById[detail.a.id] || detail.a;
       return (
         <>
-          <ActivityDetail a={detail.a} memberName={memberName(detail.a.ownerId)}
-            customerName={customerName(detail.a.customerId)} product={productOf(detail.a.productId)} />
+          <ActivityDetail a={a} memberName={memberName(a.ownerId)}
+            customerName={a.customerName || '…'} product={productOf(a.productId)} />
           <div className="modal-actions">
             <button type="button" onClick={() => setDetail(detail.back)}>← Back to list</button>
           </div>
@@ -350,12 +372,9 @@ export default function Dashboard({ user }) {
       );
     }
 
-    // deals (sales)
-    const owners = ownerIds(detail.who);
-    const rows = data.activities
-      .filter((a) => a.productId && a.activityTime && (detail.dealIds ? detail.dealIds.includes(a.id) && (!detail.who || owners.has(a.ownerId)) : owners.has(a.ownerId)))
-      .filter((a) => !detail.creditOnly || Number(a.creditAmount || 0) > 0)
-      .sort((a, b) => String(b.activityTime).localeCompare(String(a.activityTime)));
+    // deals (sales): totals over all of them, the newest 200 listed
+    const rows = dealList(detail);
+    const listed = rows.slice(0, DEAL_ROWS);
     const showMember = detail.who !== 'me';
     return (
       <>
@@ -370,13 +389,13 @@ export default function Dashboard({ user }) {
                 <th className="num">Units</th><th className="num">Amount</th><th className="num">Payment</th></tr>
             </thead>
             <tbody>
-              {rows.map((a) => (
+              {listed.map((a) => (
                 <tr key={a.id} className="clickable" tabIndex={0}
                   onClick={() => setDetail({ kind: 'activity', a, title: 'Deal details', back: detail })}
                   onKeyDown={(e) => { if (e.key === 'Enter') setDetail({ kind: 'activity', a, title: 'Deal details', back: detail }); }}>
                   <td className="nowrap">{fmtWhen(a.activityTime)}</td>
                   {showMember && <td><span className="member-chip">{memberName(a.ownerId)}</span></td>}
-                  <td>{customerName(a.customerId)}</td>
+                  <td>{rowsById[a.id]?.customerName || <span className="muted">…</span>}</td>
                   <td>{productOf(a.productId)?.name}</td>
                   <td className="num">{fmtNum(a.unitsSold)}</td>
                   <td className="num">{a.saleAmount != null ? money(a.saleAmount) : '—'}</td>
@@ -387,6 +406,7 @@ export default function Dashboard({ user }) {
             </tbody>
           </table>
         </div>
+        {rows.length > listed.length && <p className="muted hint">Showing the newest {listed.length} of {rows.length} deals. Use the Activities page (Sales only) to see them all.</p>}
         <p className="muted hint">Click a deal to see its full details. Amounts are whole deals; the dashboard counts each task's share.</p>
       </>
     );

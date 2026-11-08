@@ -32,10 +32,12 @@ public class ActivityController {
 	private final NotificationService notifications;
 	private final SalesTaskRepository tasks;
 	private final TaskProgressService progress;
+	private final ActivitySearch search;
 
 	public ActivityController(ActivityRepository repository, CustomerRepository customers, AccessService access,
 			ProductRepository products, NotificationService notifications, SalesTaskRepository tasks,
-			TaskProgressService progress) {
+			TaskProgressService progress, ActivitySearch search) {
+		this.search = search;
 		this.tasks = tasks;
 		this.progress = progress;
 		this.notifications = notifications;
@@ -102,9 +104,11 @@ public class ActivityController {
 				.filter(t -> me.equals(t.getAssignedToId()) && product.getId().equals(t.getProductId())).toList();
 		long available = 0;
 		if (!mine.isEmpty()) {
-			List<Activity> otherSales = repository.findByTenantIdAndProductIdIsNotNull(s.tenantId()).stream()
+			// a member's tasks only count sales by themselves and their team
+			List<Activity> otherSales = repository.findSales(s.tenantId(), s.ownerIds()).stream()
 					.filter(a -> activity.getId() == null || !activity.getId().equals(a.getId())).toList();
-			Map<Long, Long> own = progress.ownBalance(all, progress.soldByTask(s, all, otherSales));
+			List<SalesTask> related = progress.related(all, mine);
+			Map<Long, Long> own = progress.ownBalance(related, progress.soldByTask(s, related, otherSales));
 			available = mine.stream().mapToLong(t -> own.getOrDefault(t.getId(), 0L)).sum();
 		}
 		if (activity.getUnitsSold() > available) {
@@ -115,11 +119,89 @@ public class ActivityController {
 		}
 	}
 
+	/** One customer's activities (the full history of a large team is only available page by page, see /page). */
 	@GetMapping
-	public List<Activity> list(@RequestParam(required = false) Long customerId) {
+	public List<Activity> list(@RequestParam Long customerId) {
 		Scope s = access.scope();
-		return customerId == null ? repository.findByTenantIdAndOwnerIdIn(s.tenantId(), s.ownerIds())
-				: repository.findByTenantIdAndOwnerIdInAndCustomerId(s.tenantId(), s.ownerIds(), customerId);
+		return repository.findByTenantIdAndOwnerIdInAndCustomerId(s.tenantId(), s.ownerIds(), customerId);
+	}
+
+	/**
+	 * The activity log, one page at a time, newest first, with totals for everything that matches. The search
+	 * text matches title, attendees, notes, outcome, the customer, the member's name and the product name.
+	 */
+	@GetMapping("/page")
+	public ActivitySearch.Result page(@RequestParam(defaultValue = "") String q,
+			@RequestParam(required = false) String type, @RequestParam(required = false) Long ownerId,
+			@RequestParam(defaultValue = "false") boolean salesOnly, @RequestParam(defaultValue = "false") boolean creditOnly,
+			@RequestParam(required = false) java.time.LocalDate from, @RequestParam(required = false) java.time.LocalDate to,
+			@RequestParam(required = false) Long customerId,
+			@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size) {
+		Scope s = access.scope();
+		java.util.Collection<Long> owners = ownerId == null ? s.ownerIds()
+				: s.canSeeOwner(ownerId) ? java.util.Set.of(ownerId) : java.util.Set.of(-1L);
+		String text = q.trim().toLowerCase();
+		List<Long> qOwners = text.isEmpty() ? List.of() : s.tenantUsers().stream()
+				.filter(u -> s.canSeeOwner(u.getId()) && u.getFullName() != null && u.getFullName().toLowerCase().contains(text))
+				.map(com.hz.crm.user.AppUser::getId).toList();
+		List<Long> qProducts = text.isEmpty() ? List.of() : products.findByTenantIdOrderByNameAsc(s.tenantId()).stream()
+				.filter(p -> p.getName().toLowerCase().contains(text)).map(com.hz.crm.product.Product::getId).toList();
+		return search.search(new ActivitySearch.Filter(s.tenantId(), owners, text, qOwners, qProducts, type, salesOnly,
+				creditOnly, from, to, customerId), Math.max(page, 0), Math.min(Math.max(size, 1), 100));
+	}
+
+	/** One activity with its customer's name. */
+	@GetMapping("/{id}")
+	public ResponseEntity<ActivitySearch.Row> get(@PathVariable Long id) {
+		Activity a = visible(id, access.scope());
+		return a == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(search.rows(List.of(a)).get(0));
+	}
+
+	/** Several activities by id with customer names (at most 200), e.g. the deals behind a dashboard figure. */
+	@GetMapping("/rows")
+	public List<ActivitySearch.Row> rows(@RequestParam List<Long> ids) {
+		Scope s = access.scope();
+		List<Long> wanted = ids.stream().distinct().limit(200).toList();
+		return search.rows(repository.findAllById(wanted).stream().filter(a -> s.owns(a.getTenantId(), a.getOwnerId()))
+				.sorted(java.util.Comparator.comparing(Activity::getActivityTime,
+						java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder())))
+				.toList());
+	}
+
+	/** A sale in short form, for the dashboard chart and figures. */
+	public record Sale(Long id, Long ownerId, Long productId, java.time.LocalDateTime activityTime, Integer unitsSold,
+			java.math.BigDecimal saleAmount, java.math.BigDecimal creditAmount) {
+	}
+
+	/** All sales the user may see, in short form (no notes, no customer details). */
+	@GetMapping("/sales")
+	public List<Sale> sales() {
+		Scope s = access.scope();
+		return repository.findSales(s.tenantId(), s.ownerIds()).stream()
+				.map(a -> new Sale(a.getId(), a.getOwnerId(), a.getProductId(), a.getActivityTime(), a.getUnitsSold(),
+						a.getSaleAmount(), a.getCreditAmount()))
+				.toList();
+	}
+
+	/** Per customer: activities, last contact, sales and credit. For the customers on one page of the list. */
+	@GetMapping("/stats")
+	public Map<Long, Map<String, Object>> stats(@RequestParam List<Long> customerIds) {
+		Scope s = access.scope();
+		Map<Long, Map<String, Object>> out = new java.util.LinkedHashMap<>();
+		List<Long> ids = customerIds.stream().distinct().limit(200).toList();
+		if (ids.isEmpty()) {
+			return out;
+		}
+		for (Object[] r : repository.statsByCustomer(s.tenantId(), s.ownerIds(), ids)) {
+			Map<String, Object> m = new java.util.LinkedHashMap<>();
+			m.put("count", r[1]);
+			m.put("last", r[2]);
+			m.put("deals", r[3]);
+			m.put("sales", r[4]);
+			m.put("credit", r[5]);
+			out.put((Long) r[0], m);
+		}
+		return out;
 	}
 
 	@PostMapping

@@ -26,4 +26,13 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 	List<Customer> findByTenantIdAndOwnerIdIn(Long tenantId, Collection<Long> owners, Sort sort);
 
 	boolean existsByTenantIdAndEmail(Long tenantId, String email);
-}
+
+	/** Customers per tenant: [tenantId, count]. */
+	@Query("select c.tenantId, count(c) from Customer c group by c.tenantId")
+	List<Object[]> countByTenant();
+
+	List<Customer> findByTenantId(Long tenantId, Pageable page);
+
+	/** Customers per owner: [ownerId, count]. */
+	@Query("select c.ownerId, count(c) from Customer c where c.tenantId = ?1 and c.ownerId in ?2 group by c.ownerId")
+	List<Object[]> countByOwner(Long tenantId, Collection<Long> owners);}

@@ -10,6 +10,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
@@ -22,12 +23,32 @@ import jakarta.validation.constraints.Size;
 
 /** A log entry about an interaction with a customer: a meeting, call, visit, email or note. */
 @Entity
-@Table(name = "activities")
+@Table(name = "activities", indexes = {
+		@Index(name = "ix_activities_tenant_owner_time", columnList = "tenantId, ownerId, activityTime"),
+		@Index(name = "ix_activities_tenant_product", columnList = "tenantId, productId"),
+		@Index(name = "ix_activities_customer", columnList = "customerId") })
 public class Activity {
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
+
+	public Activity() {
+	}
+
+	/** A read-only sale record with only what progress counting needs (see ActivityRepository#findSales). */
+	public Activity(Long id, Long tenantId, Long ownerId, Long customerId, Long productId, Integer unitsSold,
+			BigDecimal saleAmount, BigDecimal amountPaid, LocalDateTime activityTime) {
+		this.id = id;
+		this.tenantId = tenantId;
+		this.ownerId = ownerId;
+		this.customerId = customerId;
+		this.productId = productId;
+		this.unitsSold = unitsSold;
+		this.saleAmount = saleAmount;
+		this.amountPaid = amountPaid;
+		this.activityTime = activityTime;
+	}
 
 	@NotNull
 	private Long customerId;

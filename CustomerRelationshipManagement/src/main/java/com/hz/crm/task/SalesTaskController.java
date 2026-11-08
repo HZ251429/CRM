@@ -105,12 +105,13 @@ public class SalesTaskController {
 				.collect(Collectors.toMap(Product::getId, Function.identity()));
 		Map<Long, List<SalesTask>> children = all.stream().filter(t -> t.getParentId() != null)
 				.collect(Collectors.groupingBy(SalesTask::getParentId));
-		List<Activity> sales = activities.findByTenantIdAndProductIdIsNotNull(s.tenantId());
-		Map<Long, Map<Long, Long>> parts = progress.allocation(s, all, sales);
+		List<SalesTask> related = progress.related(all, selected);
+		List<Activity> sales = salesFor(s);
+		Map<Long, Map<Long, Long>> parts = progress.allocation(s, related, sales);
 		Map<Long, Long> soldByTask = new java.util.HashMap<>();
 		parts.forEach((id, p) -> soldByTask.put(id, p.values().stream().mapToLong(Long::longValue).sum()));
 		Map<Long, Activity> saleById = sales.stream().collect(Collectors.toMap(Activity::getId, Function.identity()));
-		Map<Long, Long> own = progress.ownBalance(all, soldByTask);
+		Map<Long, Long> own = progress.ownBalance(related, soldByTask);
 
 		return selected.stream().map(t -> {
 			long sold = soldByTask.getOrDefault(t.getId(), 0L);
@@ -173,9 +174,20 @@ public class SalesTaskController {
 
 	/** Units of each task still with its assignee: not handed to their team and not sold by them yet (task id -> units). */
 	private Map<Long, Long> ownBalances(Scope s) {
+		Long me = s.me().getId();
 		List<SalesTask> all = tasks.findByTenantId(s.tenantId());
-		return progress.ownBalance(all,
-				progress.soldByTask(s, all, activities.findByTenantIdAndProductIdIsNotNull(s.tenantId())));
+		List<SalesTask> related = progress.related(all, all.stream()
+				.filter(t -> s.canSeeOwner(t.getAssignedToId()) || me.equals(t.getAssignedById())).toList());
+		return progress.ownBalance(related, progress.soldByTask(s, related, salesFor(s)));
+	}
+
+	/**
+	 * Sales that can count toward the tasks this user sees: the admin needs all of them; a member's tasks only
+	 * count sales by themselves and people below them.
+	 */
+	private List<Activity> salesFor(Scope s) {
+		return s.me().getRole() == Role.TENANT_ADMIN ? activities.findByTenantIdAndProductIdIsNotNull(s.tenantId())
+				: activities.findSales(s.tenantId(), s.ownerIds());
 	}
 
 	private void checkStock(Scope s, Product p, int extraUnits) {

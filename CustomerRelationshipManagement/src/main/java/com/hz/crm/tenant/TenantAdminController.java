@@ -64,8 +64,9 @@ public class TenantAdminController {
 			long soldUnits, String assignedToName, String assignedByName, LocalDateTime createdAt, String status) {
 	}
 
+	/** customers and activities are the latest 200; the tenant view has the totals */
 	public record TenantDetail(TenantView tenant, SalesSummary sales, List<UserView> users, List<Customer> customers,
-			List<Activity> activities, List<Product> products, List<TaskRow> tasks) {
+			List<com.hz.crm.activity.ActivitySearch.Row> activities, List<Product> products, List<TaskRow> tasks) {
 	}
 
 	public record CreateTenantRequest(@NotBlank String name, @NotBlank @Size(max = 5) String code,
@@ -89,10 +90,13 @@ public class TenantAdminController {
 	private final AccessService access;
 	private final PasswordEncoder encoder;
 	private final TeamRoleRepository teamRoles;
+	private final com.hz.crm.activity.ActivitySearch activitySearch;
 
 	public TenantAdminController(TenantRepository tenants, AppUserRepository users, CustomerRepository customers,
 			ActivityRepository activities, ProductRepository products, SalesTaskRepository tasks,
-			TaskProgressService progress, AccessService access, PasswordEncoder encoder, TeamRoleRepository teamRoles) {
+			TaskProgressService progress, AccessService access, PasswordEncoder encoder, TeamRoleRepository teamRoles,
+			com.hz.crm.activity.ActivitySearch activitySearch) {
+		this.activitySearch = activitySearch;
 		this.teamRoles = teamRoles;
 		this.tenants = tenants;
 		this.users = users;
@@ -105,27 +109,30 @@ public class TenantAdminController {
 		this.encoder = encoder;
 	}
 
-	private TenantData load(Long tenantId) {
-		List<AppUser> us = users.findByTenantId(tenantId);
-		List<Long> ids = us.stream().map(AppUser::getId).toList();
-		List<Product> ps = products.findByTenantIdOrderByNameAsc(tenantId);
-		List<SalesTask> ts = tasks.findByTenantId(tenantId);
-		if (ids.isEmpty()) {
-			return new TenantData(us, List.of(), List.of(), ps, ts);
-		}
-		return new TenantData(us, customers.findByTenantIdAndOwnerIdIn(tenantId, ids, Sort.by("id").descending()),
-				activities.findByTenantIdAndOwnerIdIn(tenantId, ids), ps, ts);
+	/** How many of each thing every tenant has, counted in the database (no rows are loaded). */
+	private record Counts(Map<Long, Long> customers, Map<Long, Object[]> activities, Map<Long, Long> products,
+			Map<Long, Long> tasks, Map<Long, List<AppUser>> users) {
+		long of(Map<Long, Long> m, Long id) { return m.getOrDefault(id, 0L); }
 	}
 
-	private TenantView view(Tenant t, TenantData d) {
-		LocalDateTime weekAgo = LocalDateTime.now().minusDays(7);
-		LocalDateTime last = d.activities().stream().map(Activity::getActivityTime).filter(java.util.Objects::nonNull)
-				.max(LocalDateTime::compareTo).orElse(null);
-		return new TenantView(t.getId(), t.getName(), t.getCode(), t.isActive(), t.getCreatedAt(), d.users().size(),
-				d.users().stream().filter(u -> u.getRole() == Role.TENANT_ADMIN).count(), d.customers().size(),
-				d.activities().size(),
-				d.activities().stream().filter(a -> a.getActivityTime() != null && a.getActivityTime().isAfter(weekAgo)).count(),
-				d.products().size(), d.tasks().size(), last);
+	private static Map<Long, Long> byTenant(List<Object[]> rows) {
+		return rows.stream().collect(Collectors.toMap(r -> (Long) r[0], r -> ((Number) r[1]).longValue()));
+	}
+
+	private Counts counts() {
+		return new Counts(byTenant(customers.countByTenant()),
+				activities.tenantStats(LocalDateTime.now().minusDays(7)).stream().collect(Collectors.toMap(r -> (Long) r[0], r -> r)),
+				byTenant(products.countByTenant()), byTenant(tasks.countByTenant()),
+				users.findAll().stream().filter(u -> u.getTenantId() != null).collect(Collectors.groupingBy(AppUser::getTenantId)));
+	}
+
+	private TenantView view(Tenant t, Counts c) {
+		List<AppUser> us = c.users().getOrDefault(t.getId(), List.of());
+		Object[] a = c.activities().get(t.getId());
+		return new TenantView(t.getId(), t.getName(), t.getCode(), t.isActive(), t.getCreatedAt(), us.size(),
+				us.stream().filter(u -> u.getRole() == Role.TENANT_ADMIN).count(), c.of(c.customers(), t.getId()),
+				a == null ? 0 : ((Number) a[1]).longValue(), a == null || a[2] == null ? 0 : ((Number) a[2]).longValue(),
+				c.of(c.products(), t.getId()), c.of(c.tasks(), t.getId()), a == null ? null : (LocalDateTime) a[3]);
 	}
 
 	private static BigDecimal nz(BigDecimal v) {
@@ -138,21 +145,29 @@ public class TenantAdminController {
 
 	@GetMapping
 	public List<TenantView> list() {
-		return tenants.findAll(Sort.by("id")).stream().map(t -> view(t, load(t.getId()))).toList();
+		Counts c = counts();
+		return tenants.findAll(Sort.by("id")).stream().map(t -> view(t, c)).toList();
 	}
+
+	/** The details page shows the latest customers and activities; the totals are in the tenant view. */
+	private static final int DETAIL_ROWS = 200;
 
 	/** Everything about one tenant: users and hierarchy, customers, activities, products, tasks and sales figures. */
 	@GetMapping("/{id}/details")
 	public TenantDetail details(@PathVariable Long id) {
 		Tenant t = find(id);
-		TenantData d = load(id);
+		org.springframework.data.domain.PageRequest latest = org.springframework.data.domain.PageRequest.of(0, DETAIL_ROWS);
+		TenantData d = new TenantData(users.findByTenantId(id),
+				customers.findByTenantId(id, latest.withSort(Sort.by("id").descending())),
+				activities.findByTenantIdOrderByActivityTimeDesc(id, latest),
+				products.findByTenantIdOrderByNameAsc(id), tasks.findByTenantId(id));
 		Map<Long, String> roleNames = teamRoles.findByTenantIdOrderByNameAsc(id).stream()
 				.collect(Collectors.toMap(TeamRole::getId, TeamRole::getName));
 		List<UserView> uv = d.users().stream().map(u -> UserController.view(u, roleNames)).toList();
 
 		// task progress is worked out the same way the tenant's own users see it
 		Scope scope = new Scope(access.current(), id, d.users().stream().map(AppUser::getId).collect(Collectors.toSet()), d.users());
-		List<Activity> sales = d.activities().stream().filter(a -> a.getProductId() != null).toList();
+		List<Activity> sales = activities.findByTenantIdAndProductIdIsNotNull(id); // light records, all of them
 		Map<Long, Long> sold = d.tasks().isEmpty() ? Map.of() : progress.soldByTask(scope, d.tasks(), sales);
 		Map<Long, String> names = d.users().stream()
 				.collect(Collectors.toMap(AppUser::getId, u -> u.getFullName() != null ? u.getFullName() : u.getUsername()));
@@ -177,7 +192,8 @@ public class TenantAdminController {
 				top.stream().mapToLong(SalesTask::getUnits).sum(),
 				top.stream().mapToLong(x -> Math.min(x.getUnits(), sold.getOrDefault(x.getId(), 0L))).sum(),
 				rows.size() - completed, completed);
-		return new TenantDetail(view(t, d), summary, uv, d.customers(), d.activities(), d.products(), rows);
+		return new TenantDetail(view(t, counts()), summary, uv, d.customers(), activitySearch.rows(d.activities()),
+				d.products(), rows);
 	}
 
 	@PostMapping
@@ -208,13 +224,13 @@ public class TenantAdminController {
 		admin.setRole(Role.TENANT_ADMIN);
 		admin.setTenantId(t.getId());
 		users.save(admin);
-		return view(t, load(t.getId()));
+		return view(t, counts());
 	}
 
 	@PutMapping("/{id}/active")
 	public TenantView setActive(@PathVariable Long id, @RequestBody ActiveRequest req) {
 		Tenant t = find(id);
 		t.setActive(req.active());
-		return view(tenants.save(t), load(id));
+		return view(tenants.save(t), counts());
 	}
 }

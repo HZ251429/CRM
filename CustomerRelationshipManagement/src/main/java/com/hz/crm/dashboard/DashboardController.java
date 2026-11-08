@@ -118,9 +118,13 @@ public class DashboardController {
 		Set<Long> owners = withTeam ? team : Set.of(target);
 
 		List<SalesTask> allTasks = tasks.findByTenantId(s.tenantId());
-		List<Activity> allSales = activities.findByTenantIdAndProductIdIsNotNull(s.tenantId());
-		Map<Long, Long> sold = progress.soldByTask(s, allTasks, allSales);
 		List<SalesTask> mine = allTasks.stream().filter(tasksOf(u)).toList();
+		// only the user's team's sales and the tasks needed to count the user's tasks (not the whole company)
+		List<Activity> allSales = u.getRole() == Role.TENANT_ADMIN
+				? activities.findByTenantIdAndProductIdIsNotNull(s.tenantId())
+				: activities.findSales(s.tenantId(), team);
+		List<SalesTask> related = progress.related(allTasks, mine);
+		Map<Long, Long> sold = progress.soldByTask(s, related, allSales);
 		long completed = mine.stream()
 				.filter(t -> TaskProgressService.status(t, sold.getOrDefault(t.getId(), 0L)) == TaskProgressService.Status.COMPLETED)
 				.count();
@@ -128,12 +132,13 @@ public class DashboardController {
 		long unitsAssigned = mine.stream().mapToLong(SalesTask::getUnits).sum();
 		// a member's balance is what is still theirs to sell: units split to their team are no longer theirs.
 		// the admin hands everything down, so for the admin it is everything still unsold on the tasks they assigned.
-		Map<Long, Long> own = progress.ownBalance(allTasks, sold);
+		Map<Long, Long> own = progress.ownBalance(related, sold);
 		long unitsBalance = mine.stream().mapToLong(t -> u.getRole() == Role.TENANT_ADMIN
 				? Math.max(0, t.getUnits() - sold.getOrDefault(t.getId(), 0L))
 				: own.getOrDefault(t.getId(), 0L)).sum();
+		Set<Long> mineIds = mine.stream().map(SalesTask::getId).collect(Collectors.toSet());
 		long unitsSplit = u.getRole() == Role.TENANT_ADMIN ? 0 : allTasks.stream()
-				.filter(t -> t.getParentId() != null && mine.stream().anyMatch(m -> m.getId().equals(t.getParentId())))
+				.filter(t -> t.getParentId() != null && mineIds.contains(t.getParentId()))
 				.mapToLong(SalesTask::getUnits).sum();
 
 		List<Activity> sales = allSales.stream()
@@ -247,15 +252,23 @@ public class DashboardController {
 	public List<Map<String, Object>> team() {
 		Scope s = access.scope();
 		Set<Long> owners = s.ownerIds();
-		Map<Long, Long> customerCount = customers.findByTenantIdAndOwnerIdIn(s.tenantId(), owners, Sort.unsorted())
-				.stream().collect(Collectors.groupingBy(Customer::getOwnerId, Collectors.counting()));
-		List<Activity> acts = activities.findByTenantIdAndOwnerIdIn(s.tenantId(), owners);
-		Map<Long, List<Activity>> actsBy = acts.stream().collect(Collectors.groupingBy(Activity::getOwnerId));
-		List<SalesTask> allTasks = tasks.findByTenantId(s.tenantId());
-		Map<Long, Long> sold = progress.soldByTask(s, allTasks,
-				activities.findByTenantIdAndProductIdIsNotNull(s.tenantId()));
-		Map<Long, Long> ownBal = progress.ownBalance(allTasks, sold);
+		// counted in the database: no need to load every customer and activity of the team
+		Map<Long, Long> customerCount = new java.util.HashMap<>();
+		customers.countByOwner(s.tenantId(), owners).forEach(row -> customerCount.put((Long) row[0], (Long) row[1]));
 		LocalDateTime weekAgo = LocalDateTime.now().minusDays(7);
+		Map<Long, Long> weekCount = new java.util.HashMap<>();
+		activities.countByOwnerSince(s.tenantId(), owners, weekAgo).forEach(row -> weekCount.put((Long) row[0], (Long) row[1]));
+		List<Activity> teamSales = s.me().getRole() == Role.TENANT_ADMIN
+				? activities.findByTenantIdAndProductIdIsNotNull(s.tenantId())
+				: activities.findSales(s.tenantId(), owners);
+		Map<Long, List<Activity>> salesBy = teamSales.stream().collect(Collectors.groupingBy(Activity::getOwnerId));
+		List<SalesTask> allTasks = tasks.findByTenantId(s.tenantId());
+		Map<Long, List<SalesTask>> tasksByAssignee = allTasks.stream().collect(Collectors.groupingBy(SalesTask::getAssignedToId));
+		Map<Long, List<SalesTask>> tasksByAssigner = allTasks.stream().collect(Collectors.groupingBy(SalesTask::getAssignedById));
+		List<SalesTask> related = progress.related(allTasks, allTasks.stream()
+				.filter(x -> owners.contains(x.getAssignedToId()) || owners.contains(x.getAssignedById())).toList());
+		Map<Long, Long> sold = progress.soldByTask(s, related, teamSales);
+		Map<Long, Long> ownBal = progress.ownBalance(related, sold);
 		Map<Long, String> roleNames = teamRoles.findByTenantIdOrderByNameAsc(s.tenantId()).stream()
 				.collect(Collectors.toMap(TeamRole::getId, TeamRole::getName));
 
@@ -264,9 +277,9 @@ public class DashboardController {
 			if (!owners.contains(u.getId())) {
 				continue;
 			}
-			List<Activity> own = actsBy.getOrDefault(u.getId(), List.of());
-			List<Activity> ownSales = own.stream().filter(a -> a.getProductId() != null).toList();
-			List<SalesTask> mine = allTasks.stream().filter(tasksOf(u)).toList();
+			List<Activity> ownSales = salesBy.getOrDefault(u.getId(), List.of());
+			List<SalesTask> mine = (u.getRole() == Role.TENANT_ADMIN ? tasksByAssigner : tasksByAssignee)
+					.getOrDefault(u.getId(), List.of()).stream().filter(tasksOf(u)).toList();
 			long open = mine.stream().filter(t -> TaskProgressService.status(t, sold.getOrDefault(t.getId(), 0L))
 					!= TaskProgressService.Status.COMPLETED).count();
 			Totals t = Totals.of(ownSales);
@@ -289,8 +302,7 @@ public class DashboardController {
 			r.put("unitsSold", t.units());
 			r.put("salesAmount", t.amount());
 			r.put("creditOutstanding", ownSales.stream().map(a -> nz(a.getCreditAmount())).reduce(BigDecimal.ZERO, BigDecimal::add));
-			r.put("activitiesThisWeek", own.stream()
-					.filter(a -> a.getActivityTime() != null && a.getActivityTime().isAfter(weekAgo)).count());
+			r.put("activitiesThisWeek", weekCount.getOrDefault(u.getId(), 0L));
 			rows.add(r);
 		}
 		return rows;

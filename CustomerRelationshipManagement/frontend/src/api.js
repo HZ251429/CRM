@@ -70,7 +70,19 @@ export const customersApi = {
   search: (q, page, size = 10, ownerId = '') =>
     request(`/customers?q=${encodeURIComponent(q)}&page=${page}&size=${size}${ownerId ? `&ownerId=${ownerId}` : ''}`),
 };
-export const activitiesApi = crud('activities');
+const qs = (params) => Object.entries(params)
+  .filter(([, v]) => v !== '' && v != null && v !== false)
+  .map(([k, v]) => `${k}=${encodeURIComponent(Array.isArray(v) ? v.join(',') : v)}`).join('&');
+export const activitiesApi = {
+  ...crud('activities'),
+  /** one page of the log with totals: { content, page, totalPages, totalElements, sales, saleTotal, creditTotal } */
+  page: (params) => request(`/activities/page?${qs(params)}`),
+  get: (id) => request(`/activities/${id}`),
+  rows: (ids) => request(`/activities/rows?${qs({ ids })}`),
+  forCustomer: (customerId) => request(`/activities?customerId=${customerId}`),
+  sales: () => request('/activities/sales'),
+  stats: (customerIds) => request(`/activities/stats?${qs({ customerIds })}`),
+};
 export const usersApi = crud('users');
 export const rolesApi = crud('roles');
 export const productsApi = crud('products');

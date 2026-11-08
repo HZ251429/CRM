@@ -7,13 +7,14 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
 @Entity
-@Table(name = "customers")
+@Table(name = "customers", indexes = @Index(name = "ix_customers_tenant_owner", columnList = "tenantId, ownerId"))
 public class Customer {
 
 	@Id

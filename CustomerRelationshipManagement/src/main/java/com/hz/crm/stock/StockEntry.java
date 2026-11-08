@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
@@ -15,7 +16,7 @@ import jakarta.persistence.Table;
  * or returned goods). A product's total stock is the sum of its entries.
  */
 @Entity
-@Table(name = "stock_entries")
+@Table(name = "stock_entries", indexes = @Index(name = "ix_stock_entries_tenant_product", columnList = "tenantId, productId"))
 public class StockEntry {
 
 	@Id

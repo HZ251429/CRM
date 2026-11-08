@@ -22,9 +22,9 @@ export function TenantDetail({ id, onBack }) {
 
   const { tenant: t, sales: s, users, customers, activities, products, tasks } = data;
   const userName = Object.fromEntries(users.map((u) => [u.id, u.fullName || u.username]));
-  const custName = Object.fromEntries(customers.map((c) => [c.id, `${c.firstName} ${c.lastName}`]));
   const productName = Object.fromEntries(products.map((p) => [p.id, p.name]));
-  const count = { Users: users.length, Customers: customers.length, Activities: activities.length, Products: products.length, Tasks: tasks.length };
+  // customers and activities lists hold the latest 200; the counts are the real totals
+  const count = { Users: users.length, Customers: t.customerCount, Activities: t.activityCount, Products: products.length, Tasks: tasks.length };
   const pct = s.unitsAssigned > 0 ? Math.min(100, Math.round((s.unitsSoldOnTasks / s.unitsAssigned) * 100)) : 0;
 
   return (
@@ -99,6 +99,7 @@ export function TenantDetail({ id, onBack }) {
               </tr>
             ))}
             {customers.length === 0 && <tr><td colSpan="5" className="muted">No customers</td></tr>}
+            {t.customerCount > customers.length && <tr><td colSpan="5" className="muted">Showing the newest {fmt(customers.length)} of {fmt(t.customerCount)} customers.</td></tr>}
           </tbody>
         </table>
       )}
@@ -110,11 +111,12 @@ export function TenantDetail({ id, onBack }) {
             {[...activities].sort((a, b) => String(b.activityTime).localeCompare(String(a.activityTime))).map((a) => (
               <tr key={a.id}>
                 <td className="nowrap">{fmtDateTime(a.activityTime)}</td><td>{a.type}</td><td>{a.subject}</td>
-                <td>{custName[a.customerId]}</td><td>{userName[a.ownerId]}</td>
+                <td>{a.customerName}</td><td>{userName[a.ownerId]}</td>
                 <td className="num">{a.productId ? `${fmt(a.unitsSold)} × ${productName[a.productId] || ''}${a.saleAmount != null ? ` · ${money(a.saleAmount)}` : ''}` : '—'}</td>
               </tr>
             ))}
             {activities.length === 0 && <tr><td colSpan="6" className="muted">No activities</td></tr>}
+            {t.activityCount > activities.length && <tr><td colSpan="6" className="muted">Showing the latest {fmt(activities.length)} of {fmt(t.activityCount)} activities.</td></tr>}
           </tbody>
         </table>
       )}

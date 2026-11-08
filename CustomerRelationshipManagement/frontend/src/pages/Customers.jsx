@@ -23,22 +23,27 @@ export default function Customers({ user }) {
   const [toDelete, setToDelete] = useState(null);
   const { names, multi, team } = useOwners();
 
+  // activity summary (count, last contact, sales, credit) only for the customers on this page, worked out on the server
+  const [stats, setStats] = useState({});
   const load = () => customersApi.search(q, page, 15, ownerFilter)
-    .then((r) => { setData(r); setLoaded(true); }).catch((e) => setError(e.message));
-  const loadActivities = () => activitiesApi.list().then(setActivities).catch(() => {});
+    .then((r) => {
+      setData(r);
+      setLoaded(true);
+      const ids = r.content.map((c) => c.id);
+      if (ids.length) activitiesApi.stats(ids).then(setStats).catch(() => {});
+    }).catch((e) => setError(e.message));
   useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [q, page, ownerFilter]);
-  useEffect(() => { loadActivities(); }, []);
+  // the open customer's own activities
+  useEffect(() => {
+    setActivities([]);
+    if (viewing) activitiesApi.forCustomer(viewing.id).then(setActivities).catch(() => {});
+  }, [viewing?.id]);
 
-  // activity summary per customer: count, last contact, sales and credit
-  const stats = {};
-  activities.forEach((a) => {
-    const s = stats[a.customerId] || (stats[a.customerId] = { count: 0, last: null, sales: 0, credit: 0, deals: 0, list: [] });
-    s.count += 1;
-    s.list.push(a);
-    if (!s.last || String(a.activityTime) > String(s.last)) s.last = a.activityTime;
-    if (a.productId) { s.deals += 1; s.sales += Number(a.saleAmount || 0); s.credit += Number(a.creditAmount || 0); }
-  });
-  const statsOf = (id) => stats[id] || { count: 0, last: null, sales: 0, credit: 0, deals: 0, list: [] };
+  const statsOf = (id) => {
+    const s = stats[id] || {};
+    return { count: Number(s.count || 0), last: s.last || null, sales: Number(s.sales || 0), credit: Number(s.credit || 0),
+      deals: Number(s.deals || 0), list: viewing && viewing.id === id ? activities : [] };
+  };
   const ownerName = (id) => (id === user.id ? `${names[id] || 'Me'} (me)` : names[id] || '');
 
   const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
@@ -72,7 +77,6 @@ export default function Customers({ user }) {
     try {
       await customersApi.remove(c.id);
       load();
-      loadActivities();
     } catch (err) {
       setError(err.message);
     }

@@ -53,6 +53,22 @@ public class TaskProgressService {
 		return balance;
 	}
 
+	/**
+	 * The tasks needed to work out progress of {@code wanted}: a task's count depends on every task of the same
+	 * person and product (sales fill the oldest first), and its balance depends on its sub-tasks. Counting only these
+	 * instead of the whole tenant keeps a member's pages fast in a large company.
+	 */
+	public List<SalesTask> related(List<SalesTask> all, java.util.Collection<SalesTask> wanted) {
+		Set<Long> wantedIds = wanted.stream().map(SalesTask::getId).collect(Collectors.toSet());
+		Set<String> keys = new java.util.HashSet<>();
+		for (SalesTask t : all) {
+			if (wantedIds.contains(t.getId()) || (t.getParentId() != null && wantedIds.contains(t.getParentId()))) {
+				keys.add(t.getAssignedToId() + ":" + t.getProductId());
+			}
+		}
+		return all.stream().filter(t -> keys.contains(t.getAssignedToId() + ":" + t.getProductId())).toList();
+	}
+
 	/** Sales count from the start of the day the task was assigned. */
 	private static LocalDateTime countsFrom(SalesTask t) {
 		return t.getCreatedAt().toLocalDate().atStartOfDay();
@@ -84,18 +100,28 @@ public class TaskProgressService {
 		Map<String, List<SalesTask>> byPersonAndProduct = all.stream()
 				.collect(Collectors.groupingBy(t -> t.getAssignedToId() + ":" + t.getProductId()));
 		Comparator<SalesTask> oldestFirst = Comparator.comparing(SalesTask::getCreatedAt).thenComparing(SalesTask::getId);
+		Comparator<Activity> bySaleTime = Comparator.comparing(Activity::getActivityTime).thenComparing(Activity::getId);
+
+		// sales indexed once by product and seller, so each group only looks at its own team's sales
+		Map<Long, Map<Long, List<Activity>>> salesByProductAndOwner = sales.stream()
+				.filter(a -> a.getProductId() != null && a.getOwnerId() != null && a.getActivityTime() != null
+						&& a.getUnitsSold() != null)
+				.collect(Collectors.groupingBy(Activity::getProductId, Collectors.groupingBy(Activity::getOwnerId)));
+		Map<Long, Set<Long>> teams = new HashMap<>();
 
 		for (List<SalesTask> group : byPersonAndProduct.values()) {
 			List<SalesTask> ordered = group.stream().sorted(oldestFirst).toList();
 			Map<Long, Long> filled = new HashMap<>();
 			ordered.forEach(t -> { filled.put(t.getId(), 0L); parts.put(t.getId(), new java.util.LinkedHashMap<>()); });
 			Long productId = ordered.get(0).getProductId();
-			Set<Long> team = access.subtree(ordered.get(0).getAssignedToId(), s.tenantUsers());
-			List<Activity> stream = sales.stream()
-					.filter(a -> productId.equals(a.getProductId()) && team.contains(a.getOwnerId())
-							&& a.getActivityTime() != null && a.getUnitsSold() != null)
-					.sorted(Comparator.comparing(Activity::getActivityTime).thenComparing(Activity::getId))
-					.toList();
+			Set<Long> team = teams.computeIfAbsent(ordered.get(0).getAssignedToId(),
+					id -> access.subtree(id, s.tenantUsers()));
+			Map<Long, List<Activity>> productSales = salesByProductAndOwner.getOrDefault(productId, Map.of());
+			List<Activity> stream = new java.util.ArrayList<>();
+			for (Long member : team) {
+				stream.addAll(productSales.getOrDefault(member, List.of()));
+			}
+			stream.sort(bySaleTime);
 
 			for (Activity a : stream) {
 				long left = a.getUnitsSold();

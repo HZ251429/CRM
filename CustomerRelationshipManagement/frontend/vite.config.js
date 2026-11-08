@@ -6,6 +6,6 @@ export default defineConfig({
   server: {
     port: 5173,
     // serve the API from the same origin so the session and CSRF cookies just work
-    proxy: { '/api': 'http://localhost:8081' },
+    proxy: { '/api': process.env.API_URL || 'http://localhost:8081' },
   },
 });

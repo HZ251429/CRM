@@ -5,11 +5,12 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 
 /** A product a tenant sells. Units of it are assigned in tasks and recorded as sold in activities. */
 @Entity
-@Table(name = "products")
+@Table(name = "products", indexes = @Index(name = "ix_products_tenant", columnList = "tenantId"))
 public class Product {
 
 	@Id

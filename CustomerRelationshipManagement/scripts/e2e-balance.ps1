@@ -9,6 +9,7 @@ $lead = Call POST '/users' $a $pw @{ username = 'lead'; password = $pw; fullName
 $ra = Call POST '/users' $a $pw @{ username = 'ra'; password = $pw; fullName = 'Rep A'; managerId = $lead.id }
 $rb = Call POST '/users' $a $pw @{ username = 'rb'; password = $pw; fullName = 'Rep B'; managerId = $lead.id }
 $prod = Call POST '/products' $a $pw @{ name = 'Widget'; unit = 'pcs' }
+Call POST '/stock' $a $pw @{ productId = $prod.id; quantity = 1000; note = 'test stock' } | Out-Null # admin tasks need stock
 $t = Call POST '/tasks' $a $pw @{ productId = $prod.id; assigneeId = $lead.id; units = 100; title = 'Widget drive' }
 $cuA = Call POST '/customers' "ra@$c" $pw @{ firstName = 'A'; lastName = 'Cust'; email = 'a@x.com' }
 $cuL = Call POST '/customers' "lead@$c" $pw @{ firstName = 'L'; lastName = 'Cust'; email = 'l@x.com' }

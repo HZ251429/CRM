@@ -5,11 +5,12 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 
 /** A tenant-defined job role (e.g. "Sales Manager") that can be assigned to team members. */
 @Entity
-@Table(name = "team_roles")
+@Table(name = "team_roles", indexes = @Index(name = "ix_team_roles_tenant", columnList = "tenantId"))
 public class TeamRole {
 
 	@Id

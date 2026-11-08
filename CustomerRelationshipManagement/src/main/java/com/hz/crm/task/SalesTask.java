@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
@@ -17,7 +18,7 @@ import jakarta.persistence.Table;
  * was created.
  */
 @Entity
-@Table(name = "sales_tasks")
+@Table(name = "sales_tasks", indexes = { @Index(name = "ix_sales_tasks_tenant", columnList = "tenantId"), @Index(name = "ix_sales_tasks_parent", columnList = "parentId") })
 public class SalesTask {
 
 	@Id
