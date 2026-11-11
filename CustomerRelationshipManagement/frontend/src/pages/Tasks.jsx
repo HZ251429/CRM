@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
-import { productsApi, tasksApi, stockApi } from '../api.js';
-import { fmtDateTime, useOwners } from '../format.js';
+import { activitiesApi, productsApi, tasksApi, stockApi } from '../api.js';
+import ActivityForm from '../ActivityForm.jsx';
+import SaleForm from '../SaleForm.jsx';
+import Enquiries from './Enquiries.jsx';
+import { fmtWhen, typeLabel, typeOf } from '../ActivityDetail.jsx';
+import { fmtDateTime, money, useOwners } from '../format.js';
 import Modal, { Field, ConfirmDialog } from '../Modal.jsx';
 import { STATUS, StatusBadge, balanceOf, teamBalanceOf, taskName } from '../TaskBits.jsx';
 
@@ -42,11 +46,32 @@ function PendingCell({ t }) {
  * Sales tasks: a filterable list that stays usable with many tasks. A leader creates tasks (units of a product) for
  * people below them; those people can split the units among their own team. Click a task for details and actions.
  */
-export default function Tasks({ user }) {
+/**
+ * Tasks section with two views: sales tasks, and enquiries from new customers.
+ * view = 'enquiries' opens the Enquiries view (e.g. from a notification).
+ */
+export default function Tasks({ user, view: startView }) {
+  const [view, setView] = useState(startView === 'enquiries' ? 'enquiries' : 'tasks');
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="seg" role="tablist" aria-label="Tasks or enquiries">
+          {[['tasks', '🎯 Tasks'], ['enquiries', '📥 Enquiries']].map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={view === k}
+              className={view === k ? 'seg-btn active' : 'seg-btn'} onClick={() => setView(k)}>{label}</button>
+          ))}
+        </div>
+      </div>
+      {view === 'enquiries' ? <Enquiries user={user} /> : <TaskList user={user} />}
+    </div>
+  );
+}
+
+function TaskList({ user }) {
   const [tasks, setTasks] = useState([]);
   const [products, setProducts] = useState([]);
   const [error, setError] = useState('');
-  const { team } = useOwners();
+  const { team, names: ownerNames } = useOwners();
   const me = user.id;
   const isMember = user.role === 'MEMBER';
   const [view, setView] = useState(isMember ? 'mine' : 'byme');
@@ -54,6 +79,24 @@ export default function Tasks({ user }) {
   const [showFilters, setShowFilters] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState(null);
+  // activities logged against the open task, and the task an activity is being logged for
+  const [taskActs, setTaskActs] = useState(null);
+  const [logFor, setLogFor] = useState(null);
+  const loadTaskActs = (taskId) => {
+    if (!taskId) { setTaskActs(null); return; }
+    setTaskActs(null);
+    activitiesApi.page({ taskId, activitiesOnly: true, size: 20 }).then((r) => setTaskActs(r.content)).catch(() => setTaskActs([]));
+  };
+  // the sales that count toward the open task (sales are not tied to a task: they fill the oldest task first)
+  const [taskSales, setTaskSales] = useState(null);
+  const [saleFor, setSaleFor] = useState(null); // the task a sale is being recorded from
+  const loadTaskSales = (task) => {
+    const ids = task?.dealIds || [];
+    if (!ids.length) { setTaskSales([]); return; }
+    setTaskSales(null);
+    activitiesApi.rows(ids.slice(0, 50)).then(setTaskSales).catch(() => setTaskSales([]));
+  };
+  useEffect(() => { loadTaskActs(selected); loadTaskSales(tasks.find((x) => x.id === selected)); }, [selected]);
 
   // form modal: { mode: 'new' | 'split' | 'edit', task?: TaskView }
   const [modal, setModal] = useState(null);
@@ -394,16 +437,67 @@ export default function Tasks({ user }) {
             </>
           )}
 
+          <h4 className="detail-label sub-head">Activities on this task</h4>
+          {taskActs === null ? <p className="muted">Loading...</p> : taskActs.length === 0 ? (
+            <p className="muted">Nothing logged yet. Use <strong>Log activity</strong> to record a meeting or call about this task.</p>
+          ) : (
+            <ul className="mini-list">
+              {taskActs.map((a) => (
+                <li key={a.id}>
+                  <span className="nowrap muted">{fmtWhen(a.activityTime)}</span>
+                  <span className="mini-title"><span aria-hidden="true">{typeOf(a.type).icon}</span> {a.subject}
+                    <small className="muted"> · {typeLabel(a)}</small></span>
+                  <span className="member-chip">{person(a.ownerId, ownerNames[a.ownerId] || '')}</span>
+                  <span />
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h4 className="detail-label sub-head">Sales counted on this task</h4>
+          {taskSales === null ? <p className="muted">Loading...</p> : taskSales.length === 0 ? (
+            <p className="muted">No sales yet.{current.assignedToId === me ? ' Use Record sale when you sell this product.' : ''}</p>
+          ) : (
+            <ul className="mini-list">
+              {taskSales.map((a) => (
+                <li key={a.id}>
+                  <span className="nowrap muted">{fmtWhen(a.activityTime)}</span>
+                  <span className="mini-title">💰 {a.customerName}
+                    <small className="muted"> · {fmt(current.dealUnits?.[a.id] ?? a.unitsSold)} {current.unit} counted here</small></span>
+                  <span className="member-chip">{person(a.ownerId, ownerNames[a.ownerId] || '')}</span>
+                  <span className="mini-sale">{a.saleAmount != null ? money(a.saleAmount) : ''}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
           <div className="modal-actions">
             {current.assignedById === me && <button type="button" className="danger-outline" onClick={() => setToDelete(current)}>Delete</button>}
             <span className="spacer" />
             <button type="button" onClick={() => setSelected(null)}>Close</button>
+            <button type="button" onClick={() => setLogFor(current.id)}>📝 Log activity</button>
+            {current.assignedToId === me && (
+              <button type="button" onClick={() => setSaleFor(current)} disabled={balanceOf(current) <= 0}
+                title={balanceOf(current) <= 0 ? 'Nothing left for you to sell on this task' : ''}>💰 Record sale</button>
+            )}
             {current.assignedById === me && <button type="button" onClick={() => openEdit(current)}>Edit</button>}
             {current.assignedToId === me && isLeader && left(current) > 0 && (
               <button type="button" className="primary" onClick={() => openSplit(current)}>Split to team</button>
             )}
           </div>
         </Modal>
+      )}
+      {logFor && (
+        <ActivityForm taskId={logFor} onClose={() => setLogFor(null)}
+          onSaved={() => { setLogFor(null); loadTaskActs(selected); }} />
+      )}
+      {saleFor && (
+        <SaleForm productId={saleFor.productId} user={user} onClose={() => setSaleFor(null)}
+          onSaved={() => {
+            setSaleFor(null);
+            // the sale changes this task's progress: reload the tasks, then this task's sales
+            load().then((ts) => loadTaskSales((ts || []).find((x) => x.id === selected)));
+          }} />
       )}
 
       {toDelete && (

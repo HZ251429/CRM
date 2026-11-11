@@ -18,7 +18,7 @@ import jakarta.persistence.Table;
 @Table(name = "notifications", indexes = @Index(name = "ix_notifications_recipient", columnList = "recipientId, createdAt"))
 public class Notification {
 
-	public enum Type { CUSTOMER_ADDED, MEMBER_ADDED, ACTIVITY_ADDED }
+	public enum Type { CUSTOMER_ADDED, MEMBER_ADDED, ACTIVITY_ADDED, TASK_ASSIGNED, ENQUIRY_ASSIGNED, FOLLOW_UP_DUE }
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)

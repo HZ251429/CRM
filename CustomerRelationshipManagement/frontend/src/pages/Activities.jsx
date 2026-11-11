@@ -1,206 +1,107 @@
 import { useEffect, useState } from 'react';
-import { activitiesApi, productsApi, tasksApi } from '../api.js';
-import CustomerPicker from '../CustomerPicker.jsx';
-import { money, nowLocalInput, toLocalInput, useOwners } from '../format.js';
-import Modal, { Field, ConfirmDialog, AlertDialog } from '../Modal.jsx';
-import ActivityDetail, { TYPES, typeOf, PayBadge, fmtWhen, fmtNum } from '../ActivityDetail.jsx';
-import { balanceOf } from '../TaskBits.jsx';
+import { activitiesApi, followupsApi } from '../api.js';
+import { useOwners } from '../format.js';
+import Modal, { ConfirmDialog } from '../Modal.jsx';
+import ActivityDetail, { ACTIVITY_TYPES, TYPES, typeLabel, typeOf, fmtWhen, fmtNum } from '../ActivityDetail.jsx';
+import ActivityForm from '../ActivityForm.jsx';
+import Sales from './Sales.jsx';
+import FollowUps from './FollowUps.jsx';
 
-const PICKABLE = Object.keys(TYPES).filter((t) => !TYPES[t].legacy);
 const PAGE = 50;
 
-const empty = {
-  customerId: '', customerName: '', type: 'MEETING', subject: '', attendees: '', notes: '', outcome: '', activityTime: '',
-  isSale: false, productId: '', unitsSold: '', saleAmount: '', fullyPaid: true, amountPaid: '',
-};
+/**
+ * Activities section with two views: the activity log (meetings, calls, other) and Sales.
+ * view = 'sales' opens the Sales view (e.g. from a sale notification).
+ */
+export default function Activities({ user, view: startView }) {
+  const [view, setView] = useState(['sales', 'followups'].includes(startView) ? startView : 'log');
+  const [due, setDue] = useState(null); // { overdue, today }
+  const refreshDue = () => followupsApi.summary().then(setDue).catch(() => {});
+  useEffect(() => { refreshDue(); }, [view]);
+  const dueCount = due ? due.overdue + due.today : 0;
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="seg" role="tablist" aria-label="Activities, follow-ups or sales">
+          {[['log', '📝 Activities'], ['followups', '⏰ Follow-ups'], ['sales', '💰 Sales']].map(([k, label]) => (
+            <button key={k} type="button" role="tab" aria-selected={view === k}
+              className={view === k ? 'seg-btn active' : 'seg-btn'} onClick={() => setView(k)}>
+              {label}
+              {k === 'followups' && dueCount > 0 && (
+                <span className={due.overdue ? 'count-pill late' : 'count-pill'}
+                  title={`${due.overdue} overdue, ${due.today} due today`}>{dueCount}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+      {view === 'sales' ? <Sales user={user} />
+        : view === 'followups' ? <FollowUps user={user} onChanged={refreshDue} />
+          : <ActivityLog user={user} />}
+    </div>
+  );
+}
 
-
-/** Activity log as a compact list; click a row for the full details. */
-export default function Activities({ user }) {
-  // the log is searched and paged on the server: items = pages loaded so far, result = totals of the last search
+/**
+ * Activity log: meetings (in person or online), calls and other activities, each about a customer or a task.
+ * Searched and paged on the server; click a row for the full details.
+ */
+function ActivityLog({ user }) {
   const [items, setItems] = useState([]);
   const [result, setResult] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [hasAny, setHasAny] = useState(true);
-  const [products, setProducts] = useState([]);
-  const [form, setForm] = useState(empty);
-  const [editingId, setEditingId] = useState(null);
-  const [alert, setAlert] = useState(null); // { title, message } popup for errors when saving
-  const [editingSale, setEditingSale] = useState(null); // the sale being edited, to give its units back
-  const [myTasks, setMyTasks] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
-  const [formError, setFormError] = useState('');
+  const [formFor, setFormFor] = useState(null); // { entry } (entry null = new)
+  const [viewing, setViewing] = useState(null);
   const [toDelete, setToDelete] = useState(null);
   const { names, multi, team } = useOwners();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
-  const [salesOnly, setSalesOnly] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const params = (page) => ({ q: search.trim(), type: typeFilter, ownerId: ownerFilter, salesOnly, from, to, page, size: PAGE });
-  const anyFilter = search || typeFilter || ownerFilter || salesOnly || from || to;
+  const anyFilter = search || typeFilter || ownerFilter || from || to;
+  const params = (page) => ({ q: search.trim(), type: typeFilter, ownerId: ownerFilter, from, to, activitiesOnly: true, page, size: PAGE });
   const load = (page = 0) => activitiesApi.page(params(page)).then((r) => {
     setResult(r);
     setItems((old) => (page === 0 ? r.content : [...old, ...r.content]));
     setLoaded(true);
     if (page === 0 && !anyFilter) setHasAny(r.totalElements > 0);
   }).catch((e) => setError(e.message));
-  useEffect(() => {
-    productsApi.list().then(setProducts).catch((e) => setError(e.message));
-    loadBalance();
-  }, []);
-  // filters are applied on the server; typing in the search box waits a moment before searching
-  useEffect(() => { const t = setTimeout(() => load(0), search ? 300 : 0); return () => clearTimeout(t); }, [search, typeFilter, ownerFilter, salesOnly, from, to]);
+  useEffect(() => { const t = setTimeout(() => load(0), search ? 300 : 0); return () => clearTimeout(t); }, [search, typeFilter, ownerFilter, from, to]);
   const loadMore = () => { setLoadingMore(true); load(result.page + 1).finally(() => setLoadingMore(false)); };
 
-  const productOf = (id) => products.find((p) => p.id === Number(id));
   const memberName = (id) => (id === user.id ? `${names[id] || 'Me'} (me)` : names[id] || 'Unknown');
-  const onChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
-
-  // date/time defaults to now but can be changed, e.g. when logging a meeting afterwards
-  const openAdd = () => { setEditingId(null); setEditingSale(null); setForm({ ...empty, activityTime: nowLocalInput() }); setFormError(''); setOpen(true); };
-  const openEdit = (a) => {
-    setViewing(null);
-    setEditingId(a.id);
-    setEditingSale(a.productId ? { productId: a.productId, unitsSold: a.unitsSold } : null);
-    const fullyPaid = a.saleAmount == null || a.amountPaid == null || Number(a.amountPaid) >= Number(a.saleAmount);
-    setForm({
-      ...empty, customerId: String(a.customerId), customerName: a.customerName || '', type: a.type, subject: a.subject,
-      attendees: a.attendees || '', notes: a.notes || '', outcome: a.outcome || '',
-      activityTime: toLocalInput(a.activityTime),
-      isSale: !!a.productId, productId: a.productId ? String(a.productId) : '',
-      unitsSold: a.unitsSold ? String(a.unitsSold) : '', saleAmount: a.saleAmount != null ? String(a.saleAmount) : '',
-      fullyPaid, amountPaid: !fullyPaid && a.amountPaid != null ? String(a.amountPaid) : '',
-    });
-    setFormError('');
-    setOpen(true);
-  };
-  const close = () => setOpen(false);
-
-  // ----- a member may only sell what is left in their own balance -----
-  const limited = user.role === 'MEMBER';
-  function loadBalance() { tasksApi.list().then((t) => setMyTasks(t.filter((x) => x.assignedToId === user.id))).catch(() => {}); }
-  const balanceFor = (productId) => {
-    const pid = Number(productId);
-    const tasks = myTasks.filter((t) => t.productId === pid);
-    let left = tasks.reduce((n, t) => n + balanceOf(t), 0);
-    if (editingSale && editingSale.productId === pid) left += Number(editingSale.unitsSold || 0);
-    return { left, hasTask: tasks.length > 0 };
-  };
-  const saleLimit = limited && form.isSale && form.productId ? balanceFor(form.productId) : null;
-  const overLimit = saleLimit && form.unitsSold !== '' && Number(form.unitsSold) > saleLimit.left;
-
-  const limitMessage = (productId, lim) => {
-    const p = productOf(productId);
-    return lim.hasTask
-      ? `You can sell at most ${lim.left} ${p?.unit || 'units'} of ${p?.name || 'this product'}. That is all that is left in your balance.`
-      : `You have no units of ${p?.name || 'this product'} to sell. Ask your lead to assign you a task for it.`;
-  };
-
-  // the units field can never hold more than the member's balance: larger numbers are cut back with an alert
-  const onUnitsChange = (e) => {
-    const v = e.target.value;
-    if (limited && form.productId && v !== '') {
-      const lim = balanceFor(form.productId);
-      if (Number(v) > lim.left) {
-        setForm({ ...form, unitsSold: lim.left > 0 ? String(lim.left) : '' });
-        setAlert({ title: 'Not enough balance', message: limitMessage(form.productId, lim) });
-        return;
-      }
-    }
-    setForm({ ...form, unitsSold: v });
-  };
-  // switching product re-checks the units already entered against that product's balance
-  const onProductChange = (e) => {
-    const pid = e.target.value;
-    const next = { ...form, productId: pid };
-    if (limited && pid && form.unitsSold !== '') {
-      const lim = balanceFor(pid);
-      if (Number(form.unitsSold) > lim.left) {
-        next.unitsSold = lim.left > 0 ? String(lim.left) : '';
-        setAlert({ title: 'Not enough balance', message: limitMessage(pid, lim) });
-      }
-    }
-    setForm(next);
-  };
-
-  const credit = form.isSale && !form.fullyPaid && form.saleAmount !== ''
-    ? Math.max(0, Number(form.saleAmount) - Number(form.amountPaid || 0)) : 0;
-
-  const submit = async (e) => {
-    e.preventDefault();
-    setFormError('');
-    // errors are shown as a popup so they are seen even when the form is scrolled down to the Save button
-    const fail = (message, title = 'Could not save') => { setFormError(message); setAlert({ title, message }); };
-    const sale = form.isSale;
-    if (sale && saleLimit && saleLimit.left <= 0) {
-      fail(limitMessage(form.productId, saleLimit), 'Not enough balance');
-      return;
-    }
-    if (overLimit) {
-      const p = productOf(form.productId);
-      fail(saleLimit.hasTask
-        ? `You can sell at most ${saleLimit.left} ${p?.unit || 'units'} of ${p?.name || 'this product'}. That is all that is left in your balance.`
-        : `You have no units of ${p?.name || 'this product'} to sell. Ask your lead to assign you a task for it.`, 'Not enough balance');
-      return;
-    }
-    if (sale && !form.fullyPaid && Number(form.amountPaid || 0) > Number(form.saleAmount)) {
-      fail('Amount paid cannot be more than the total amount');
-      return;
-    }
-    const body = {
-      customerId: Number(form.customerId), type: form.type, subject: form.subject, attendees: form.attendees,
-      notes: form.notes, outcome: form.outcome, activityTime: form.activityTime || null,
-      productId: sale ? Number(form.productId) : null,
-      unitsSold: sale ? Number(form.unitsSold) : null,
-      saleAmount: sale ? Number(form.saleAmount) : null,
-      amountPaid: sale ? Number(form.fullyPaid ? form.saleAmount : (form.amountPaid || 0)) : null,
-    };
-    try {
-      if (editingId) await activitiesApi.update(editingId, body);
-      else await activitiesApi.create(body);
-      close();
-      load(0);
-      loadBalance();
-    } catch (err) {
-      fail(err.message, /balance|to sell/i.test(err.message) ? 'Not enough balance' : 'Could not save');
-    }
-  };
+  const about = (a) => (a.customerId ? a.customerName : a.taskId ? `🎯 ${a.taskTitle || `Task #${a.taskId}`}` : '—');
 
   const remove = async () => {
     const a = toDelete;
     setToDelete(null);
     setViewing(null);
-    try {
-      await activitiesApi.remove(a.id);
-      load(0);
-    } catch (err) {
-      setError(err.message);
-    }
+    try { await activitiesApi.remove(a.id); load(0); } catch (err) { setError(err.message); }
   };
 
-  const shown = items;
   const total = result?.totalElements || 0;
-  const cols = multi ? 5 : 4;
+  const cols = multi ? 4 : 3;
 
   return (
     <div>
       {error && <p className="error">{error}</p>}
 
       <div className="toolbar">
-        <input className="search" placeholder="Search customer, title, notes, member, product..." value={search}
+        <input className="search" placeholder="Search title, notes, customer, member..." value={search}
           onChange={(e) => setSearch(e.target.value)} />
-        <button type="button" className="primary" onClick={openAdd}>+ Log activity</button>
+        <button type="button" className="primary" onClick={() => setFormFor({ entry: null })}>+ Log activity</button>
       </div>
       <div className="toolbar filters">
         <select className="filter-select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} title="Filter by type">
           <option value="">All types</option>
-          {Object.keys(TYPES).map((t) => <option key={t} value={t}>{TYPES[t].icon} {TYPES[t].label}</option>)}
+          {[...ACTIVITY_TYPES, 'VISIT', 'EMAIL', 'NOTE'].map((t) => (
+            <option key={t} value={t}>{TYPES[t].icon} {TYPES[t].label}{TYPES[t].legacy ? ' (older)' : ''}</option>
+          ))}
         </select>
         {multi && (
           <select className="filter-select" value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)} title="Filter by member">
@@ -208,37 +109,22 @@ export default function Activities({ user }) {
             {team.map((t) => <option key={t.userId} value={t.userId}>{t.userId === user.id ? `${t.fullName} (me)` : t.fullName}</option>)}
           </select>
         )}
-        <label className="filter-time">From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label className="filter-time">To
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-        <label className="check-inline">
-          <input type="checkbox" checked={salesOnly} onChange={(e) => setSalesOnly(e.target.checked)} /> Sales only
-        </label>
+        <label className="filter-time">From <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label className="filter-time">To <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
         {anyFilter && (
-          <button type="button" onClick={() => { setSearch(''); setTypeFilter(''); setOwnerFilter(''); setSalesOnly(false); setFrom(''); setTo(''); }}>Clear filters</button>
+          <button type="button" onClick={() => { setSearch(''); setTypeFilter(''); setOwnerFilter(''); setFrom(''); setTo(''); }}>Clear filters</button>
         )}
       </div>
 
-      {total > 0 && (
-        <p className="muted log-summary">
-          {fmtNum(total)} {total === 1 ? 'entry' : 'entries'}
-          {result.sales > 0 && ` · ${fmtNum(result.sales)} sale${result.sales > 1 ? 's' : ''} worth ${money(result.saleTotal)}`}
-          {Number(result.creditTotal) > 0 && ` · ${money(result.creditTotal)} on credit`}
-        </p>
-      )}
+      {total > 0 && <p className="muted log-summary">{fmtNum(total)} {total === 1 ? 'activity' : 'activities'}</p>}
 
       <div className="table-scroll">
         <table className="act-table">
           <thead>
-            <tr>
-              <th>When</th>{multi && <th>Member</th>}<th>Activity</th><th>Customer</th><th className="num">Sale</th>
-            </tr>
+            <tr><th>When</th>{multi && <th>Member</th>}<th>Activity</th><th>About</th></tr>
           </thead>
           <tbody>
-            {shown.map((a) => {
+            {items.map((a) => {
               const t = typeOf(a.type);
               return (
                 <tr key={a.id} className="clickable" tabIndex={0} onClick={() => setViewing(a)}
@@ -246,166 +132,53 @@ export default function Activities({ user }) {
                   <td className="nowrap">{fmtWhen(a.activityTime)}</td>
                   {multi && <td><span className={a.ownerId === user.id ? 'member-chip me' : 'member-chip'}>{memberName(a.ownerId)}</span></td>}
                   <td className="act-title">
-                    <span><span aria-hidden="true">{t.icon}</span> {a.subject}</span>
-                    <span className="muted act-preview">{t.label}{(a.notes || a.outcome) ? ` · ${a.notes || a.outcome}` : ''}</span>
+                    <span><span aria-hidden="true">{t.icon}</span> {a.subject}
+                      {a.followUpAt && !a.followUpDoneAt && (
+                        <span className="followup-tag" title="Follow-up">⏰ {fmtWhen(a.followUpAt)}</span>
+                      )}
+                    </span>
+                    <span className="muted act-preview">{typeLabel(a)}{(a.notes || a.outcome) ? ` · ${a.notes || a.outcome}` : ''}</span>
                   </td>
-                  <td>{a.customerName}</td>
-                  <td className="num">
-                    {a.productId ? (
-                      <div className="act-sale">
-                        <strong>{a.saleAmount != null ? money(a.saleAmount) : `${fmtNum(a.unitsSold)} units`}</strong>
-                        <PayBadge a={a} />
-                      </div>
-                    ) : <span className="muted">—</span>}
-                  </td>
+                  <td>{about(a)}</td>
                 </tr>
               );
             })}
             {loaded && total === 0 && (
               <tr><td colSpan={cols} className="muted">
-                {!hasAny && !anyFilter ? 'Nothing logged yet. Use "+ Log activity" to record a meeting, call or sale.' : 'No entries match the filters.'}
+                {!hasAny && !anyFilter ? 'Nothing logged yet. Use "+ Log activity" to record a meeting or call.' : 'No activities match the filters.'}
               </td></tr>
             )}
             {!loaded && !error && <tr><td colSpan={cols} className="muted">Loading...</td></tr>}
           </tbody>
         </table>
       </div>
-      {total > shown.length && (
+      {total > items.length && (
         <div className="more-row">
-          <span className="muted">Showing {fmtNum(shown.length)} of {fmtNum(total)}</span>
+          <span className="muted">Showing {fmtNum(items.length)} of {fmtNum(total)}</span>
           <button type="button" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading...' : 'Show more'}</button>
         </div>
       )}
+      <p className="muted hint">Activities can be about a customer or about a task. Sales are under the Sales tab above.</p>
 
       {viewing && (
         <Modal title="Activity details" onClose={() => setViewing(null)}>
-          <ActivityDetail a={viewing} memberName={memberName(viewing.ownerId)}
-            customerName={viewing.customerName} product={productOf(viewing.productId)} />
+          <ActivityDetail a={viewing} memberName={memberName(viewing.ownerId)} customerName={viewing.customerName} />
           <div className="modal-actions">
             <button type="button" className="danger-outline" onClick={() => setToDelete(viewing)}>Delete</button>
             <span className="spacer" />
             <button type="button" onClick={() => setViewing(null)}>Close</button>
-            <button type="button" className="primary" onClick={() => openEdit(viewing)}>Edit</button>
+            <button type="button" className="primary" onClick={() => { setFormFor({ entry: viewing }); setViewing(null); }}>Edit</button>
           </div>
         </Modal>
       )}
-
       {toDelete && (
-        <ConfirmDialog message={`Delete the entry "${toDelete.subject}"? This cannot be undone.`}
+        <ConfirmDialog message={`Delete the activity "${toDelete.subject}"? This cannot be undone.`}
           onConfirm={remove} onCancel={() => setToDelete(null)} />
       )}
-
-      {open && (
-        <Modal title={editingId ? 'Edit log entry' : 'Log activity'} onClose={close}>
-          <form onSubmit={submit} autoComplete="off">
-            {formError && <p className="error" role="alert">{formError}</p>}
-            <div className="type-picker" role="radiogroup" aria-label="Type">
-              {(TYPES[form.type]?.legacy ? [...PICKABLE, form.type] : PICKABLE).map((k) => (
-                <button key={k} type="button" role="radio" aria-checked={form.type === k}
-                  className={form.type === k ? 'type-option active' : 'type-option'}
-                  onClick={() => setForm({ ...form, type: k })}>
-                  <span aria-hidden="true">{TYPES[k].icon}</span> {TYPES[k].label}
-                </button>
-              ))}
-            </div>
-            <div className="form-grid">
-              <Field label="Customer">
-                <CustomerPicker key={editingId || 'new'} value={form.customerId} initial={form.customerName} autoFocus
-                  onChange={(id, name) => setForm((f) => ({ ...f, customerId: id, customerName: name }))} />
-              </Field>
-              <Field label="Date and time">
-                <input name="activityTime" type="datetime-local" value={form.activityTime || ''} onChange={onChange} required />
-              </Field>
-              <Field label="Title" wide>
-                <input name="subject" value={form.subject} onChange={onChange} required maxLength={200}
-                  placeholder="e.g. Quarterly review with finance team" />
-              </Field>
-              <Field label="Attendees" wide>
-                <input name="attendees" value={form.attendees} onChange={onChange} maxLength={500}
-                  placeholder="e.g. Ravi (CFO), Priya, me" />
-              </Field>
-            </div>
-
-            <div className={form.isSale ? 'sale-box on' : 'sale-box'}>
-              <label className="check-inline sale-toggle">
-                <input type="checkbox" checked={form.isSale}
-                  onChange={(e) => setForm({ ...form, isSale: e.target.checked })} />
-                <span><strong>This includes a sale</strong> <span className="muted">— record product, units and payment</span></span>
-              </label>
-              {form.isSale && (
-                <div className="form-grid">
-                  <Field label="Product">
-                    <select name="productId" value={form.productId} onChange={onProductChange} required>
-                      <option value="">Select product...</option>
-                      {products.filter((p) => p.active || String(p.id) === form.productId).map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.unit}){limited ? ` · ${balanceFor(p.id).left} left` : ''}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label={`Units sold${productOf(form.productId) ? ` (${productOf(form.productId).unit})` : ''}`}>
-                    <input name="unitsSold" type="number" min="1" step="1" value={form.unitsSold}
-                      max={saleLimit ? Math.max(saleLimit.left, 1) : 1000000}
-                      disabled={!!saleLimit && saleLimit.left <= 0}
-                      onChange={onUnitsChange} required placeholder={saleLimit && saleLimit.left <= 0 ? 'Nothing left to sell' : 'e.g. 10'}
-                      className={overLimit ? 'invalid' : ''} aria-invalid={overLimit || undefined} />
-                    {saleLimit && (
-                      <small className={overLimit || saleLimit.left === 0 ? 'balance-note over' : 'balance-note'}>
-                        {!saleLimit.hasTask ? 'No task for this product, so nothing to sell yet'
-                          : overLimit ? `Only ${saleLimit.left} left in your balance`
-                            : `Your balance: ${saleLimit.left} ${productOf(form.productId)?.unit || 'units'}`}
-                      </small>
-                    )}
-                  </Field>
-                  <Field label="Total deal amount (₹)">
-                    <input name="saleAmount" type="number" min="0" step="0.01" value={form.saleAmount}
-                      onChange={onChange} required placeholder="e.g. 50000" />
-                  </Field>
-                  <div className="field">
-                    <span>Payment</span>
-                    <div className="seg pay-seg" role="radiogroup" aria-label="Payment">
-                      {[[true, 'Fully paid'], [false, 'Part on credit']].map(([v, label]) => (
-                        <button key={label} type="button" role="radio" aria-checked={form.fullyPaid === v}
-                          className={form.fullyPaid === v ? 'seg-btn active' : 'seg-btn'}
-                          onClick={() => setForm({ ...form, fullyPaid: v })}>{label}</button>
-                      ))}
-                    </div>
-                  </div>
-                  {!form.fullyPaid && (
-                    <>
-                      <Field label="Amount paid now (₹)">
-                        <input name="amountPaid" type="number" min="0" step="0.01" max={form.saleAmount || undefined}
-                          value={form.amountPaid} onChange={onChange} required placeholder="0 if nothing paid yet" />
-                      </Field>
-                      <div className="credit-note">
-                        <span className="muted">On credit</span>
-                        <strong>{money(credit)}</strong>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="form-grid">
-              <Field label="Notes" wide>
-                <textarea name="notes" rows={6} maxLength={2000} value={form.notes} onChange={onChange}
-                  placeholder="What was discussed..." />
-                <small className="muted count">{form.notes.length} / 2000</small>
-              </Field>
-              <Field label="Outcome / next steps" wide>
-                <textarea name="outcome" rows={3} maxLength={2000} value={form.outcome} onChange={onChange}
-                  className="short" placeholder="Decisions made, follow-ups, who does what by when..." />
-              </Field>
-            </div>
-            <div className="modal-actions">
-              <button type="button" onClick={close}>Cancel</button>
-              <button type="submit" className="primary">{editingId ? 'Save changes' : 'Save entry'}</button>
-            </div>
-          </form>
-        </Modal>
+      {formFor && (
+        <ActivityForm entry={formFor.entry} onClose={() => setFormFor(null)}
+          onSaved={() => { setFormFor(null); load(0); }} />
       )}
-
-      {alert && <AlertDialog title={alert.title} message={alert.message} onClose={() => setAlert(null)} />}
     </div>
   );
 }

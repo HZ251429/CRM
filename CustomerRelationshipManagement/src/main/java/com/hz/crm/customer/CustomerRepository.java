@@ -15,9 +15,10 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
 	@Query("""
 			select c from Customer c
 			where c.tenantId = :t and c.ownerId in :owners
-			  and (lower(c.firstName) like lower(concat('%', :q, '%'))
-			    or lower(c.lastName) like lower(concat('%', :q, '%'))
-			    or lower(c.email) like lower(concat('%', :q, '%'))
+			  and (lower(concat(c.firstName, ' ', coalesce(c.lastName, ''))) like lower(concat('%', :q, '%'))
+			    or lower(coalesce(c.email, '')) like lower(concat('%', :q, '%'))
+			    or lower(coalesce(c.phone, '')) like lower(concat('%', :q, '%'))
+			    or lower(coalesce(c.address, '')) like lower(concat('%', :q, '%'))
 			    or lower(coalesce(c.company, '')) like lower(concat('%', :q, '%')))
 			""")
 	Page<Customer> search(@Param("t") Long tenantId, @Param("owners") Collection<Long> owners,

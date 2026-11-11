@@ -43,15 +43,11 @@ Say 'other uses rep phone' (Chat "other@$c" $repPhone 'hi')
 Say 'hi' (Chat $r $repPhone 'hi')
 Say 'tap My balance' (Chat $r $repPhone $null 'm:balance')
 Say 'type tasks' (Chat $r $repPhone 'tasks')
-"--- log a sale: Meera, visit, 60 refused (only 50), 20 for Rs 20,000, Rs 5,000 paid"
-Say 'tap Log activity' (Chat $r $repPhone $null 'm:log')
+"--- record a sale: Meera, 60 refused (only 50), 20 for Rs 20,000, Rs 5,000 paid"
+Say 'tap Record sale' (Chat $r $repPhone $null 'm:sale')
 Say 'search "iyer"' (Chat $r $repPhone 'iyer')
 $cust = ($last[0].list.rows | Select-Object -First 1).id
 Say "pick $cust" (Chat $r $repPhone $null $cust)
-Say 'pick Visit' (Chat $r $repPhone $null 't:VISIT')
-Say 'title' (Chat $r $repPhone 'Demo of the new purifier')
-Say 'skip notes' (Chat $r $repPhone $null 'skip')
-Say 'yes, a sale' (Chat $r $repPhone $null 'sale:yes')
 Say "pick product p:$($p.id)" (Chat $r $repPhone $null "p:$($p.id)")
 Say '60 units' (Chat $r $repPhone '60')
 Say '20 units' (Chat $r $repPhone '20')
@@ -64,9 +60,10 @@ Say 'saved on the website' ("$($pg.totalElements) sale, units=$($pg.content[0].u
 Chat $r $repPhone 'balance' | Out-Null; Say 'balance now (expect 30)' (($last[0].text -split "`n" | Where-Object { $_ -match 'sell' }) -join ' ')
 "--- an 8-letter answer that looks like a code is taken as the answer (title 'Payments')"
 Chat $r $repPhone 'log' | Out-Null
+Chat $r $repPhone $null 't:CALL' | Out-Null
+Chat $r $repPhone $null 'about:customer' | Out-Null
 Chat $r $repPhone 'iyer' | Out-Null
 Chat $r $repPhone $null $last[0].list.rows[0].id | Out-Null
-Chat $r $repPhone $null 't:CALL' | Out-Null
 Say 'title Payments' (Chat $r $repPhone 'Payments')
 Chat $r $repPhone 'cancel' | Out-Null
 "--- cancel in the middle"
@@ -74,12 +71,11 @@ Say 'log' (Chat $r $repPhone 'log')
 Say 'cancel' (Chat $r $repPhone 'cancel')
 "--- add a customer, then log for them"
 Say 'tap Add customer' (Chat $r $repPhone $null 'm:customer')
-Say 'first' (Chat $r $repPhone 'Arjun')
-Say 'last' (Chat $r $repPhone 'Menon')
+Say 'name' (Chat $r $repPhone 'Arjun Menon')
+Say 'skip mobile' (Chat $r $repPhone $null 'skip')
 Say 'bad email' (Chat $r $repPhone 'arjun-at-x')
 Say 'good email' (Chat $r $repPhone 'arjun@x.com')
-Say 'skip phone' (Chat $r $repPhone $null 'skip')
-Say 'company' (Chat $r $repPhone 'Menon Stores')
+Say 'address' (Chat $r $repPhone 'Menon Stores, Kochi')
 Say 'save' (Chat $r $repPhone $null 'save:yes')
 Say 'on the website' (((Call GET '/customers?q=menon&page=0&size=5' $r $pw).content | ForEach-Object { "$($_.firstName) $($_.lastName), $($_.company), owner=$($_.ownerId -eq $rep.id)" }) -join '; ')
 "--- wrong codes are limited: 5 wrong from one number, then even a right code is refused for 15 minutes"

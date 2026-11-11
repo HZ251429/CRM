@@ -38,8 +38,12 @@ public class CustomerController {
 
 	private final NotificationService notifications;
 
+	private final com.hz.crm.enquiry.EnquiryRepository enquiryRepository;
+
 	public CustomerController(CustomerRepository repository, DealRepository dealRepository,
-			ActivityRepository activityRepository, AccessService access, NotificationService notifications) {
+			ActivityRepository activityRepository, AccessService access, NotificationService notifications,
+			com.hz.crm.enquiry.EnquiryRepository enquiryRepository) {
+		this.enquiryRepository = enquiryRepository;
 		this.notifications = notifications;
 		this.repository = repository;
 		this.dealRepository = dealRepository;
@@ -86,7 +90,7 @@ public class CustomerController {
 		customer.setOwnerId(s.me().getId());
 		Customer saved = repository.save(customer);
 		notifications.notifyLeads(s.tenantId(), s.me().getId(), Notification.Type.CUSTOMER_ADDED,
-				s.me().getFullName() + " added a new customer: " + saved.getFirstName() + " " + saved.getLastName()
+				s.me().getFullName() + " added a new customer: " + saved.getName()
 						+ (saved.getCompany() == null || saved.getCompany().isBlank() ? "" : " (" + saved.getCompany() + ")"),
 				saved.getId());
 		return saved;
@@ -101,6 +105,7 @@ public class CustomerController {
 		existing.setFirstName(customer.getFirstName());
 		existing.setLastName(customer.getLastName());
 		existing.setEmail(customer.getEmail());
+		existing.setAddress(customer.getAddress());
 		existing.setPhone(customer.getPhone());
 		existing.setCompany(customer.getCompany());
 		return ResponseEntity.ok(repository.save(existing));
@@ -113,6 +118,7 @@ public class CustomerController {
 		}
 		dealRepository.deleteByCustomerId(id);
 		activityRepository.deleteByCustomerId(id);
+		enquiryRepository.deleteByCustomerId(id);
 		repository.deleteById(id);
 		return ResponseEntity.noContent().build();
 	}

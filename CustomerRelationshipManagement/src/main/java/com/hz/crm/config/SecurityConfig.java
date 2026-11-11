@@ -42,7 +42,10 @@ public class SecurityConfig {
 	SecurityFilterChain filterChain(HttpSecurity http, CookieCsrfTokenRepository csrfRepository,
 			SecurityContextRepository contextRepository, AppUserRepository users, TenantRepository tenants)
 			throws Exception {
-		http.csrf(c -> c.csrfTokenRepository(csrfRepository).csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()))
+		// the WhatsApp webhook is called by Meta's servers, not a browser: it has no session or CSRF token and is
+		// protected instead by Meta's signature (X-Hub-Signature-256), checked in WaWebhookController
+		http.csrf(c -> c.csrfTokenRepository(csrfRepository).csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler())
+				.ignoringRequestMatchers("/api/whatsapp/webhook"))
 			.cors(Customizer.withDefaults())
 			.httpBasic(AbstractHttpConfigurer::disable)
 			.formLogin(AbstractHttpConfigurer::disable)
@@ -54,6 +57,7 @@ public class SecurityConfig {
 			.authorizeHttpRequests(a -> a
 				.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 				.requestMatchers("/api/auth/login", "/api/auth/csrf", "/error").permitAll()
+				.requestMatchers("/api/whatsapp/webhook").permitAll()
 				.requestMatchers("/api/admin/**").hasRole("SUPER_ADMIN")
 				.anyRequest().authenticated());
 		return http.build();

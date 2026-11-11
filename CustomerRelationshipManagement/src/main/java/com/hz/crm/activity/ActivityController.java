@@ -52,10 +52,86 @@ public class ActivityController {
 	}
 
 	private void checkCustomer(Long customerId, Scope s) {
-		boolean ok = customers.findById(customerId).filter(c -> s.owns(c.getTenantId(), c.getOwnerId())).isPresent();
+		boolean ok = customerId != null
+				&& customers.findById(customerId).filter(c -> s.owns(c.getTenantId(), c.getOwnerId())).isPresent();
 		if (!ok) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown customer");
 		}
+	}
+
+	/** A task the user may log against: assigned to them or someone below them, or assigned by them. */
+	private SalesTask visibleTask(Long taskId, Scope s) {
+		return tasks.findById(taskId)
+				.filter(t -> s.tenantId().equals(t.getTenantId())
+						&& (s.canSeeOwner(t.getAssignedToId()) || s.me().getId().equals(t.getAssignedById())))
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown task"));
+	}
+
+	/**
+	 * What an entry is against. A sale is always with a customer and never against a task (it only uses up the
+	 * seller's balance, oldest task first). A meeting, call or other activity is against a customer or a task.
+	 * New entries with a product are sales; a meeting is in person (a visit) or online.
+	 */
+	private void checkTarget(Activity a, Scope s, boolean isNew) {
+		boolean sale = a.getProductId() != null;
+		if (sale) {
+			if (isNew || a.getType() == null) {
+				a.setType("SALE");
+			}
+			a.setTaskId(null);
+			checkCustomer(a.getCustomerId(), s);
+			if (a.getSubject() == null || a.getSubject().isBlank()) {
+				a.setSubject(products.findById(a.getProductId()).map(p -> "Sale of " + (a.getUnitsSold() == null ? "" : a.getUnitsSold() + " ")
+						+ p.getUnit() + " " + p.getName()).orElse("Sale"));
+			}
+		} else {
+			if ("SALE".equals(a.getType())) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose the product that was sold");
+			}
+			if (a.getCustomerId() == null && a.getTaskId() == null) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Choose the customer or the task this is about");
+			}
+			if (a.getCustomerId() != null) {
+				checkCustomer(a.getCustomerId(), s);
+			}
+			if (a.getTaskId() != null) {
+				visibleTask(a.getTaskId(), s);
+			}
+			if (a.getSubject() == null || a.getSubject().isBlank()) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a title");
+			}
+		}
+		if ("MEETING".equals(a.getType())) {
+			if (a.getMeetingMode() == null) {
+				a.setMeetingMode("IN_PERSON");
+			}
+		} else {
+			a.setMeetingMode(null);
+		}
+	}
+
+	/**
+	 * Follow-up on an activity: a time (in the future when set or moved), what to do, and how early to remind
+	 * (0, 15, 60 or 1440 minutes). Moving the time sends a fresh reminder; removing it clears the follow-up.
+	 *
+	 * @param previous the saved activity when editing, null when new
+	 */
+	private static void checkFollowUp(Activity a, Activity previous) {
+		if (a.getFollowUpAt() == null) {
+			a.setFollowUpNote(null);
+			a.setFollowUpRemindMinutes(null);
+			return;
+		}
+		boolean moved = previous == null || !a.getFollowUpAt().equals(previous.getFollowUpAt());
+		if (moved && a.getFollowUpAt().isBefore(java.time.LocalDateTime.now().minusMinutes(1))) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pick a follow-up date and time in the future");
+		}
+		Integer m = a.getFollowUpRemindMinutes();
+		if (m != null && !FollowUpController.REMIND_CHOICES.contains(m)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, FollowUpController.REMIND_ERROR);
+		}
+		a.setFollowUpRemindMinutes(m == null ? 0 : m);
+		a.setFollowUpNote(a.getFollowUpNote() == null || a.getFollowUpNote().isBlank() ? null : a.getFollowUpNote().trim());
 	}
 
 	/**
@@ -136,6 +212,7 @@ public class ActivityController {
 			@RequestParam(defaultValue = "false") boolean salesOnly, @RequestParam(defaultValue = "false") boolean creditOnly,
 			@RequestParam(required = false) java.time.LocalDate from, @RequestParam(required = false) java.time.LocalDate to,
 			@RequestParam(required = false) Long customerId,
+			@RequestParam(defaultValue = "false") boolean activitiesOnly, @RequestParam(required = false) Long taskId,
 			@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "50") int size) {
 		Scope s = access.scope();
 		java.util.Collection<Long> owners = ownerId == null ? s.ownerIds()
@@ -147,7 +224,7 @@ public class ActivityController {
 		List<Long> qProducts = text.isEmpty() ? List.of() : products.findByTenantIdOrderByNameAsc(s.tenantId()).stream()
 				.filter(p -> p.getName().toLowerCase().contains(text)).map(com.hz.crm.product.Product::getId).toList();
 		return search.search(new ActivitySearch.Filter(s.tenantId(), owners, text, qOwners, qProducts, type, salesOnly,
-				creditOnly, from, to, customerId), Math.max(page, 0), Math.min(Math.max(size, 1), 100));
+				creditOnly, from, to, customerId, activitiesOnly, taskId), Math.max(page, 0), Math.min(Math.max(size, 1), 100));
 	}
 
 	/** One activity with its customer's name. */
@@ -208,8 +285,11 @@ public class ActivityController {
 	@ResponseStatus(HttpStatus.CREATED)
 	public Activity create(@Valid @RequestBody Activity activity) {
 		Scope s = access.scope();
-		checkCustomer(activity.getCustomerId(), s);
+		checkTarget(activity, s, true);
 		checkSale(activity, s, null);
+		checkFollowUp(activity, null);
+		activity.setFollowUpRemindedAt(null);
+		activity.setFollowUpDoneAt(null);
 		activity.setId(null);
 		if (activity.getActivityTime() == null) {
 			activity.setActivityTime(java.time.LocalDateTime.now());
@@ -229,21 +309,40 @@ public class ActivityController {
 		return f;
 	}
 
-	/** e.g. "Rep One logged a visit with Big Buyer: Order #3 · sale of 10 pcs Purifier, ₹45,000" */
+	/**
+	 * e.g. "Rep One recorded a sale to Big Buyer: 10 pcs Purifier, ₹45,000",
+	 * "Rep One logged a meeting (online) with Big Buyer: Price talk", "Rep One logged a call on task Diwali push: ..."
+	 */
 	private void notifyLeads(Activity a, Scope s) {
-		String customer = customers.findById(a.getCustomerId()).map(c -> c.getFirstName() + " " + c.getLastName()).orElse("a customer");
-		String type = a.getType() == null ? "activity" : a.getType().toLowerCase(java.util.Locale.ROOT);
-		StringBuilder msg = new StringBuilder(s.me().getFullName()).append(" logged a ").append(type)
-				.append(" with ").append(customer).append(": ").append(a.getSubject());
+		String customer = a.getCustomerId() == null ? null
+				: customers.findById(a.getCustomerId()).map(com.hz.crm.customer.Customer::getName).orElse("a customer");
+		StringBuilder msg = new StringBuilder(s.me().getFullName());
 		if (a.getProductId() != null) {
+			msg.append(" recorded a sale to ").append(customer).append(": ");
 			products.findById(a.getProductId()).ifPresent(p -> {
-				msg.append(" · sale of ").append(a.getUnitsSold()).append(' ').append(p.getUnit()).append(' ').append(p.getName());
+				msg.append(a.getUnitsSold()).append(' ').append(p.getUnit()).append(' ').append(p.getName());
 				if (a.getSaleAmount() != null) {
 					synchronized (RUPEES) {
 						msg.append(", ").append(RUPEES.format(a.getSaleAmount()));
 					}
 				}
 			});
+		} else {
+			String type = switch (a.getType() == null ? "" : a.getType()) {
+				case "MEETING" -> "ONLINE".equals(a.getMeetingMode()) ? "meeting (online)" : "meeting";
+				case "CALL" -> "call";
+				case "OTHER" -> "activity";
+				default -> a.getType() == null ? "activity" : a.getType().toLowerCase(java.util.Locale.ROOT);
+			};
+			msg.append(type.matches("^[aeiou].*") ? " logged an " : " logged a ").append(type);
+			if (customer != null) {
+				msg.append(" with ").append(customer);
+			}
+			if (a.getTaskId() != null) {
+				tasks.findById(a.getTaskId()).ifPresent(t -> msg.append(" on task ")
+						.append(t.getTitle() == null ? "#" + t.getId() : t.getTitle()));
+			}
+			msg.append(": ").append(a.getSubject());
 		}
 		notifications.notifyLeads(s.tenantId(), s.me().getId(), Notification.Type.ACTIVITY_ADDED, msg.toString(), a.getId());
 	}
@@ -255,10 +354,24 @@ public class ActivityController {
 		if (a == null) {
 			return ResponseEntity.notFound().build();
 		}
-		checkCustomer(activity.getCustomerId(), s);
+		if (activity.getType() == null || (a.getProductId() != null && activity.getProductId() != null && !"SALE".equals(a.getType()))) {
+			activity.setType(a.getType()); // an older "meeting with a sale" keeps its type when the sale is edited
+		}
+		checkTarget(activity, s, false);
 		activity.setId(a.getId()); // so the balance check gives this sale's own units back
 		checkSale(activity, s, a.getProductId());
+		checkFollowUp(activity, a);
+		if (!java.util.Objects.equals(activity.getFollowUpAt(), a.getFollowUpAt())
+				|| !java.util.Objects.equals(activity.getFollowUpRemindMinutes(), a.getFollowUpRemindMinutes())) {
+			a.setFollowUpRemindedAt(null); // new time or reminder: remind again
+			a.setFollowUpDoneAt(null);
+		}
+		a.setFollowUpAt(activity.getFollowUpAt());
+		a.setFollowUpNote(activity.getFollowUpNote());
+		a.setFollowUpRemindMinutes(activity.getFollowUpRemindMinutes());
 		a.setCustomerId(activity.getCustomerId());
+		a.setTaskId(activity.getTaskId());
+		a.setMeetingMode(activity.getMeetingMode());
 		a.setProductId(activity.getProductId());
 		a.setUnitsSold(activity.getUnitsSold());
 		a.setSaleAmount(activity.getSaleAmount());

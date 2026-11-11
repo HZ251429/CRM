@@ -205,7 +205,7 @@ public class DashboardController {
 		List<Activity> latest = sales.stream()
 				.sorted(java.util.Comparator.comparing(Activity::getActivityTime).reversed()).limit(6).toList();
 		Map<Long, String> customerNames = customers.findAllById(latest.stream().map(Activity::getCustomerId).toList())
-				.stream().collect(Collectors.toMap(Customer::getId, c -> c.getFirstName() + " " + c.getLastName()));
+				.stream().collect(Collectors.toMap(Customer::getId, Customer::getName));
 		r.put("recentDeals", latest.stream().map(a -> {
 			Map<String, Object> m = new LinkedHashMap<>();
 			m.put("id", a.getId());

@@ -32,8 +32,14 @@ public class WaSession {
 	@Column(nullable = false)
 	private LocalDateTime updatedAt = LocalDateTime.now();
 
+	/** when this number last wrote to us through WhatsApp: within 24 hours we may reply with normal messages */
+	private LocalDateTime lastInboundAt;
+
 	protected WaSession() {
 	}
+
+	public LocalDateTime getLastInboundAt() { return lastInboundAt; }
+	public void setLastInboundAt(LocalDateTime t) { this.lastInboundAt = t; }
 
 	public WaSession(String phone) {
 		this.phone = phone;

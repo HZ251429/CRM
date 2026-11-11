@@ -87,6 +87,19 @@ export const usersApi = crud('users');
 export const rolesApi = crud('roles');
 export const productsApi = crud('products');
 export const tasksApi = crud('tasks');
+export const followupsApi = {
+  /** who: 'me' | 'team'; open: true = still to do, false = done */
+  list: (who = 'me', open = true) => request(`/followups?who=${who}&open=${open}`),
+  summary: () => request('/followups/summary'),
+  /** { done } to mark done / reopen, { followUpAt, remindMinutes, note } to move or change */
+  change: (id, body) => request(`/followups/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+};
+export const enquiriesApi = {
+  list: () => request('/enquiries'),
+  create: (body) => request('/enquiries', { method: 'POST', body: JSON.stringify(body) }),
+  /** status: 'LOST' to close it, 'OPEN' to reopen */
+  setStatus: (id, status) => request(`/enquiries/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+};
 export const stockApi = {
   list: () => request('/stock'),
   history: (productId) => request(`/stock/${productId}/entries`),
@@ -99,6 +112,11 @@ export const whatsappApi = {
   unlink: () => request('/whatsapp/link', { method: 'DELETE' }),
   /** test chat: { phone, text } or { phone, replyId } -> the assistant's replies */
   send: (body) => request('/whatsapp/test-chat', { method: 'POST', body: JSON.stringify(body) }),
+  saveSettings: (s) => request('/whatsapp/settings', { method: 'PUT', body: JSON.stringify(s) }),
+  summaryNow: () => request('/whatsapp/summary-now', { method: 'POST' }),
+  /** test chat: alerts and summaries the CRM sent on its own, newer than id `after` */
+  outbox: (after) => request(`/whatsapp/test-chat/outbox?after=${after}`),
+  outboxLatest: () => request('/whatsapp/test-chat/outbox/latest'),
 };
 export const notificationsApi = {
   list: (limit = 30) => request(`/notifications?limit=${limit}`),

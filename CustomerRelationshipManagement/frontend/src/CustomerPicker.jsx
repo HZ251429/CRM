@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { customersApi } from './api.js';
 
-const label = (c) => `${c.firstName} ${c.lastName}${c.company ? ` (${c.company})` : ''}`;
+const label = (c) => `${c.name || `${c.firstName} ${c.lastName}`.trim()}${c.company ? ` (${c.company})` : ''}`;
 
 /**
  * Pick a customer by typing part of their name, email or company. Searches the server, so it works the same
@@ -66,8 +66,8 @@ export default function CustomerPicker({ value, initial = '', onChange, autoFocu
             <li key={c.id} role="option" aria-selected={i === active}
               className={i === active ? 'active' : ''} onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => { e.preventDefault(); pick(c); }}>
-              <strong>{c.firstName} {c.lastName}</strong>
-              <span className="muted">{[c.company, c.email].filter(Boolean).join(' · ')}</span>
+              <strong>{c.name || `${c.firstName} ${c.lastName}`}</strong>
+              <span className="muted">{[c.company, c.phone, c.email].filter(Boolean).join(' · ')}</span>
             </li>
           ))}
           {!loading && results.length === 0 && <li className="muted picker-empty">No customers match.</li>}

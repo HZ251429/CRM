@@ -41,6 +41,13 @@ services:
       # creates/extends tables on start; see deploy/README.md before changing
       DDL_AUTO: ${DDL_AUTO:-update}
       JAVA_OPTS: ${JAVA_OPTS:--Xmx768m -XX:+ExitOnOutOfMemoryError}
+      # WhatsApp Cloud API (Meta): empty = not connected (see README, "Connecting WhatsApp")
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-en}
+      WHATSAPP_TEST_CHAT: ${WHATSAPP_TEST_CHAT:-true}
       TZ: ${TZ:-Asia/Kolkata}
     # no published port: only Caddy can reach the backend
 

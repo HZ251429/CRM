@@ -38,11 +38,45 @@ export default function WhatsApp({ user }) {
   const [listFor, setListFor] = useState(null); // the message whose list is open
   const endRef = useRef(null);
 
+  const [settings, setSettings] = useState(null);
+  const [saved, setSaved] = useState('');
+  const lastOutbox = useRef(null); // id of the newest alert already shown in the test chat
+
   const loadStatus = () => whatsappApi.status().then((s) => {
     setStatus(s);
+    setSettings(s.settings);
     if (s.linked) { setPhone(showPhone(s.phone)); setCode(null); }
   }).catch((e) => setError(e.message));
   useEffect(() => { loadStatus(); }, []);
+
+  // the test chat shows alerts and summaries as they arrive (only new ones, from when the page was opened)
+  useEffect(() => {
+    if (!status?.linked || !status.testChat) return undefined;
+    let stop = false;
+    const poll = async () => {
+      try {
+        if (lastOutbox.current == null) lastOutbox.current = (await whatsappApi.outboxLatest()).id;
+        const fresh = await whatsappApi.outbox(lastOutbox.current);
+        if (!stop && fresh.length) {
+          lastOutbox.current = fresh[fresh.length - 1].id;
+          setChat((c) => [...c, ...fresh.map((m) => ({ text: m.text, kind: m.kind, at: time() }))]);
+        }
+      } catch { /* try again on the next tick */ }
+    };
+    poll();
+    const t = setInterval(poll, 4000);
+    return () => { stop = true; clearInterval(t); };
+  }, [status?.linked, status?.testChat]);
+
+  const saveSettings = async (next) => {
+    setSettings(next);
+    setSaved('');
+    try { setSettings(await whatsappApi.saveSettings(next)); setSaved('Saved'); } catch (e) { setError(e.message); }
+  };
+  const summaryNow = async () => {
+    setSaved('');
+    try { await whatsappApi.summaryNow(); setSaved('Summary sent'); } catch (e) { setError(e.message); }
+  };
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [chat, sending]);
 
@@ -118,12 +152,43 @@ export default function WhatsApp({ user }) {
             )}
           </div>
         )}
+        {status.linked && settings && (
+          <div className="wa-settings">
+            <h4 className="detail-label sub-head">Alerts &amp; daily summary</h4>
+            <label className="check-inline">
+              <input type="checkbox" checked={settings.alertsTasks}
+                onChange={(e) => saveSettings({ ...settings, alertsTasks: e.target.checked })} />
+              <span><strong>Tasks assigned to me</strong> <span className="muted">— when someone gives you units to sell</span></span>
+            </label>
+            <label className="check-inline">
+              <input type="checkbox" checked={settings.alertsTeam}
+                onChange={(e) => saveSettings({ ...settings, alertsTeam: e.target.checked })} />
+              <span><strong>My team's updates</strong> <span className="muted">— customers, members and activities/sales added below you</span></span>
+            </label>
+            <label className="check-inline">
+              <input type="checkbox" checked={settings.summaryEnabled}
+                onChange={(e) => saveSettings({ ...settings, summaryEnabled: e.target.checked })} />
+              <span><strong>Daily summary</strong> at</span>
+              <select value={settings.summaryHour} disabled={!settings.summaryEnabled} aria-label="Summary time"
+                onChange={(e) => saveSettings({ ...settings, summaryHour: Number(e.target.value) })}>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{new Date(2000, 0, 1, h).toLocaleTimeString('en-IN', { hour: 'numeric', hour12: true })}</option>
+                ))}
+              </select>
+            </label>
+            <div className="wa-actions">
+              <button type="button" onClick={summaryNow}>Send today's summary now</button>
+              {saved && <span className="muted small">✓ {saved}</span>}
+            </div>
+          </div>
+        )}
         <h4 className="detail-label sub-head">What you can do on WhatsApp</h4>
         <ul className="wa-features">
           <li>📝 Log a meeting, call or visit, with or without a sale</li>
           <li>📦 Check how many units you can still sell</li>
           <li>🎯 See your open tasks</li>
           <li>👤 Add a customer</li>
+          <li>📊 Get today's summary (type <strong>summary</strong>)</li>
         </ul>
         <p className="muted small">Type <strong>menu</strong> at any time, or <strong>cancel</strong> to stop what you are doing.
           Everything you do on WhatsApp follows the same rules as the website.</p>
@@ -148,7 +213,8 @@ export default function WhatsApp({ user }) {
             {chat.map((m, i) => (
               m.system ? <p key={i} className="wa-system">{m.text}</p> : (
                 <div key={i} className={m.me ? 'wa-msg me' : 'wa-msg'}>
-                  <div className="wa-bubble">
+                  <div className={m.kind ? 'wa-bubble wa-pushed' : 'wa-bubble'}>
+                    {m.kind && <span className="wa-kind">{m.kind === 'SUMMARY' ? 'Daily summary' : 'Alert'}</span>}
                     <Formatted text={m.text} />
                     <span className="wa-time">{m.at}</span>
                   </div>

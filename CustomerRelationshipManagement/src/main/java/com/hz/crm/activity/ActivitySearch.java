@@ -32,13 +32,15 @@ public class ActivitySearch {
 	/** What to look for. Owners must already be limited to what the user may see. */
 	public record Filter(Long tenantId, Collection<Long> owners, String q, Collection<Long> qOwners,
 			Collection<Long> qProducts, String type, boolean salesOnly, boolean creditOnly, LocalDate from, LocalDate to,
-			Long customerId) {
+			Long customerId, boolean activitiesOnly, Long taskId) {
 	}
 
 	/** One row of the log, with the customer's name so the browser does not need the customer list. */
 	public record Row(Long id, Long customerId, String customerName, String type, String subject, String attendees,
 			String notes, String outcome, Long productId, Integer unitsSold, BigDecimal saleAmount, BigDecimal amountPaid,
-			BigDecimal creditAmount, java.time.LocalDateTime activityTime, Long ownerId) {
+			BigDecimal creditAmount, java.time.LocalDateTime activityTime, Long ownerId, Long taskId, String taskTitle,
+			String meetingMode, java.time.LocalDateTime followUpAt, String followUpNote, Integer followUpRemindMinutes,
+			java.time.LocalDateTime followUpDoneAt) {
 	}
 
 	public record Result(List<Row> content, int page, int totalPages, long totalElements, long sales,
@@ -60,6 +62,12 @@ public class ActivitySearch {
 		}
 		if (f.type() != null && !f.type().isBlank()) {
 			p.add(cb.equal(a.get("type"), f.type()));
+		}
+		if (f.activitiesOnly()) {
+			p.add(cb.isNull(a.get("productId")));
+		}
+		if (f.taskId() != null) {
+			p.add(cb.equal(a.get("taskId"), f.taskId()));
 		}
 		if (f.salesOnly() || f.creditOnly()) {
 			p.add(cb.isNotNull(a.get("productId")));
@@ -86,7 +94,8 @@ public class ActivitySearch {
 			Expression<String> fullName = cb.lower(cb.concat(cb.concat(c.get("firstName"), " "), c.get("lastName")));
 			customers.select(c.get("id")).where(cb.equal(c.get("tenantId"), f.tenantId()), cb.or(
 					cb.like(fullName, like, '\\'),
-					cb.like(cb.lower(c.get("email")), like, '\\'),
+					cb.like(cb.lower(cb.coalesce(c.<String>get("email"), "")), like, '\\'),
+					cb.like(cb.lower(cb.coalesce(c.<String>get("phone"), "")), like, '\\'),
 					cb.like(cb.lower(cb.coalesce(c.<String>get("company"), "")), like, '\\')));
 			any.add(a.get("customerId").in(customers));
 			if (!f.qOwners().isEmpty()) {
@@ -127,20 +136,30 @@ public class ActivitySearch {
 				((Number) totals[1]).longValue(), toBig(totals[2]), toBig(totals[3]));
 	}
 
-	/** Activities as rows with the customer's name (one query for all the names). */
+	/** Activities as rows with the customer's name and the task's title (one query each for all of them). */
 	public List<Row> rows(List<Activity> items) {
-		Set<Long> ids = items.stream().map(Activity::getCustomerId).collect(Collectors.toSet());
+		Set<Long> ids = items.stream().map(Activity::getCustomerId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
 		Map<Long, Customer> byId = ids.isEmpty() ? Map.of()
 				: em.createQuery("select c from Customer c where c.id in :ids", Customer.class).setParameter("ids", ids)
 						.getResultList().stream().collect(Collectors.toMap(Customer::getId, Function.identity()));
+		Set<Long> taskIds = items.stream().map(Activity::getTaskId).filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+		Map<Long, String> taskTitles = new java.util.HashMap<>();
+		if (!taskIds.isEmpty()) {
+			for (Object[] r : em.createQuery("select t.id, t.title from SalesTask t where t.id in :ids", Object[].class)
+					.setParameter("ids", taskIds).getResultList()) {
+				taskTitles.put((Long) r[0], r[1] == null ? "Task #" + r[0] : (String) r[1]);
+			}
+		}
 		return items.stream().map(x -> {
-			Customer c = byId.get(x.getCustomerId());
-			String name = c == null ? "Customer #" + x.getCustomerId()
-					: c.getFirstName() + " " + c.getLastName()
+			Customer c = x.getCustomerId() == null ? null : byId.get(x.getCustomerId());
+			String name = x.getCustomerId() == null ? null : c == null ? "Customer #" + x.getCustomerId()
+					: c.getName()
 							+ (c.getCompany() == null || c.getCompany().isBlank() ? "" : " · " + c.getCompany());
 			return new Row(x.getId(), x.getCustomerId(), name, x.getType(), x.getSubject(), x.getAttendees(), x.getNotes(),
 					x.getOutcome(), x.getProductId(), x.getUnitsSold(), x.getSaleAmount(), x.getAmountPaid(),
-					x.getCreditAmount(), x.getActivityTime(), x.getOwnerId());
+					x.getCreditAmount(), x.getActivityTime(), x.getOwnerId(), x.getTaskId(),
+					x.getTaskId() == null ? null : taskTitles.get(x.getTaskId()), x.getMeetingMode(), x.getFollowUpAt(),
+					x.getFollowUpNote(), x.getFollowUpRemindMinutes(), x.getFollowUpDoneAt());
 		}).toList();
 	}
 

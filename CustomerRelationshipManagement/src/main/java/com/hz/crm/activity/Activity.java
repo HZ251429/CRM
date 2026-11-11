@@ -16,8 +16,6 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
@@ -50,15 +48,59 @@ public class Activity {
 		this.activityTime = activityTime;
 	}
 
-	@NotNull
+	/** the customer it was with; required for sales, optional for an activity that is against a task instead */
 	private Long customerId;
 
-	/** MEETING, CALL, VISIT, EMAIL, NOTE (TASK kept for older entries) */
-	@Pattern(regexp = "MEETING|CALL|VISIT|EMAIL|NOTE|TASK", message = "Unknown activity type")
+	/** for an activity (not a sale): the task it is about, if it is against a task rather than a customer */
+	private Long taskId;
+
+	/**
+	 * MEETING, CALL, OTHER, SALE. VISIT, EMAIL, NOTE and TASK are kept for older entries (a visit is now an
+	 * in-person meeting).
+	 */
+	@Pattern(regexp = "MEETING|CALL|OTHER|SALE|VISIT|EMAIL|NOTE|TASK", message = "Unknown activity type")
 	private String type = "MEETING";
 
-	/** short title of the entry */
-	@NotBlank
+	// ---- follow-up: when to get back to the customer / task after this activity (all empty = none needed)
+
+	/** when to follow up */
+	private LocalDateTime followUpAt;
+
+	/** what to do then, e.g. "Send the revised quote" */
+	@Size(max = 500)
+	@Column(length = 500)
+	private String followUpNote;
+
+	/** how long before the follow-up to remind: 0 = at the time, 15, 60, 1440 (a day) */
+	@jakarta.validation.constraints.Min(0)
+	@jakarta.validation.constraints.Max(10080)
+	private Integer followUpRemindMinutes;
+
+	/** when the reminder went out (so it is sent once) */
+	@com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+	private LocalDateTime followUpRemindedAt;
+
+	/** when the follow-up was marked done */
+	@com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
+	private LocalDateTime followUpDoneAt;
+
+	public LocalDateTime getFollowUpAt() { return followUpAt; }
+	public void setFollowUpAt(LocalDateTime t) { this.followUpAt = t; }
+	public String getFollowUpNote() { return followUpNote; }
+	public void setFollowUpNote(String n) { this.followUpNote = n; }
+	public Integer getFollowUpRemindMinutes() { return followUpRemindMinutes; }
+	public void setFollowUpRemindMinutes(Integer m) { this.followUpRemindMinutes = m; }
+	public LocalDateTime getFollowUpRemindedAt() { return followUpRemindedAt; }
+	public void setFollowUpRemindedAt(LocalDateTime t) { this.followUpRemindedAt = t; }
+	public LocalDateTime getFollowUpDoneAt() { return followUpDoneAt; }
+	public void setFollowUpDoneAt(LocalDateTime t) { this.followUpDoneAt = t; }
+
+	/** for meetings: IN_PERSON (a visit) or ONLINE */
+	@Pattern(regexp = "IN_PERSON|ONLINE", message = "Meeting must be in person or online")
+	@Column(length = 20)
+	private String meetingMode;
+
+	/** short title of the entry (filled in automatically for a sale when left empty) */
 	@Size(max = 200)
 	private String subject;
 
@@ -118,6 +160,10 @@ public class Activity {
 	public void setId(Long id) { this.id = id; }
 	public Long getCustomerId() { return customerId; }
 	public void setCustomerId(Long customerId) { this.customerId = customerId; }
+	public Long getTaskId() { return taskId; }
+	public void setTaskId(Long taskId) { this.taskId = taskId; }
+	public String getMeetingMode() { return meetingMode; }
+	public void setMeetingMode(String meetingMode) { this.meetingMode = meetingMode; }
 	public String getType() { return type; }
 	public void setType(String type) { this.type = type; }
 	public String getSubject() { return subject; }

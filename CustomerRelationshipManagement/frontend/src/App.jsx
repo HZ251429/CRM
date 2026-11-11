@@ -60,6 +60,7 @@ export default function App() {
   const [user, setUser] = useState(isLoggedIn() ? getUser() : null);
   const [tab, setTab] = useState(null);
   const [pageKey, setPageKey] = useState(0); // bumped to reload a page, e.g. when opened from a notification
+  const [pageView, setPageView] = useState(null); // a view inside the page to open (Sales inside Activities)
   // mode: light | dark | auto (follows the device setting)
   const [theme, setTheme] = useState(['light', 'dark', 'auto'].includes(readPref('theme')) ? readPref('theme') : 'auto');
   const [systemDark, setSystemDark] = useState(darkQuery().matches);
@@ -100,7 +101,7 @@ export default function App() {
         </div>
         <nav>
           {names.map((name) => (
-            <button key={name} className={name === current ? 'nav active' : 'nav'} onClick={() => setTab(name)}>
+            <button key={name} className={name === current ? 'nav active' : 'nav'} onClick={() => { setPageView(null); setTab(name); }}>
               <span>{ALL_TABS[name].icon}</span> {name}
             </button>
           ))}
@@ -125,10 +126,16 @@ export default function App() {
         <div className="page-top">
           <h1 className="page-title">{current === 'Tenants' ? 'Tenant management' : current}</h1>
           {user.role !== 'SUPER_ADMIN' && (
-            <NotificationBell onOpenTab={(t) => { setTab(t); setPageKey((k) => k + 1); }} />
+            <NotificationBell onOpenTab={(t) => {
+              // sales live inside the Activities section, enquiries inside the Tasks section
+              const inside = { Sales: ['Activities', 'sales'], FollowUps: ['Activities', 'followups'], Enquiries: ['Tasks', 'enquiries'] }[t];
+              setPageView(inside ? inside[1] : null);
+              setTab(inside ? inside[0] : t);
+              setPageKey((k) => k + 1);
+            }} />
           )}
         </div>
-        <Page key={`${current}-${pageKey}`} user={user} />
+        <Page key={`${current}-${pageKey}`} user={user} view={pageView} />
       </main>
       {themeOpen && (
         <Modal title="Appearance" onClose={() => setThemeOpen(false)}>

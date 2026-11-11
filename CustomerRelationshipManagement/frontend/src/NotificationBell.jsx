@@ -6,6 +6,9 @@ const KIND = {
   CUSTOMER_ADDED: { icon: 'user', tone: 'sky', tab: 'Customers', label: 'New customer' },
   MEMBER_ADDED: { icon: 'userPlus', tone: 'indigo', tab: 'Team', label: 'New team member' },
   ACTIVITY_ADDED: { icon: 'note', tone: 'emerald', tab: 'Activities', label: 'New activity' },
+  TASK_ASSIGNED: { icon: 'target', tone: 'amber', tab: 'Tasks', label: 'Task assigned to you' },
+  ENQUIRY_ASSIGNED: { icon: 'user', tone: 'sky', tab: 'Enquiries', label: 'New enquiry for you' },
+  FOLLOW_UP_DUE: { icon: 'clock', tone: 'rose', tab: 'FollowUps', label: 'Follow-up reminder' },
 };
 const POLL_MS = 30000;
 
@@ -53,7 +56,9 @@ export default function NotificationBell({ onOpenTab }) {
     }
     setOpen(false);
     const k = KIND[n.type];
-    if (k && onOpenTab) onOpenTab(k.tab);
+    // a sale is an "activity added" notification, but sales have their own section
+    const tab = n.type === 'ACTIVITY_ADDED' && / recorded a sale /.test(n.message) ? 'Sales' : k?.tab;
+    if (tab && onOpenTab) onOpenTab(tab);
   };
 
   const readAll = async () => {

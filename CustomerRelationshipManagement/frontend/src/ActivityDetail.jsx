@@ -1,17 +1,32 @@
 import { money } from './format.js';
 
-/** Kinds of log entries. TASK only exists on older entries and is not offered for new ones. */
+/**
+ * Kinds of log entries. New activities are a meeting (in person or online), a call or something else; sales are
+ * recorded separately. Visit, email, note and task only exist on older entries and are not offered for new ones.
+ */
 export const TYPES = {
   MEETING: { label: 'Meeting', icon: '🤝' },
   CALL: { label: 'Call', icon: '📞' },
-  VISIT: { label: 'Visit', icon: '📍' },
-  EMAIL: { label: 'Email', icon: '✉️' },
-  NOTE: { label: 'Note', icon: '📝' },
+  OTHER: { label: 'Other', icon: '🗂️' },
+  SALE: { label: 'Sale', icon: '💰', sale: true },
+  VISIT: { label: 'Visit', icon: '📍', legacy: true },
+  EMAIL: { label: 'Email', icon: '✉️', legacy: true },
+  NOTE: { label: 'Note', icon: '📝', legacy: true },
   TASK: { label: 'Task', icon: '✅', legacy: true },
+};
+/** the types offered when logging a new activity */
+export const ACTIVITY_TYPES = ['MEETING', 'CALL', 'OTHER'];
+export const MEETING_MODES = { IN_PERSON: { label: 'In person', icon: '📍' }, ONLINE: { label: 'Online', icon: '💻' } };
+/** e.g. "Meeting · Online" */
+export const typeLabel = (a) => {
+  const t = TYPES[a.type] || { label: a.type };
+  return a.type === 'MEETING' && a.meetingMode ? `${t.label} · ${MEETING_MODES[a.meetingMode]?.label || ''}` : t.label;
 };
 export const typeOf = (t) => TYPES[t] || { label: t, icon: '•' };
 
-export const fmtNum = (n) => Number(n || 0).toLocaleString('en-IN');
+const REMIND_LABEL = { 15: '15 min before', 60: '1 hour before', 1440: '1 day before' };
+
+export const fmtNum =(n) => Number(n || 0).toLocaleString('en-IN');
 
 export const fmtWhen = (t, withYear = false) => {
   const d = new Date(t);
@@ -40,7 +55,7 @@ export default function ActivityDetail({ a, memberName, customerName, product })
       <div className="detail-head">
         <span className="log-icon" aria-hidden="true">{t.icon}</span>
         <div>
-          <span className="log-type">{t.label}{a.productId ? ' · Sale' : ''}</span>
+          <span className="log-type">{typeLabel(a)}{a.productId && a.type !== 'SALE' ? ' · Sale' : ''}</span>
           <h3 className="detail-title">{a.subject}</h3>
           <p className="muted detail-meta">{fmtWhen(a.activityTime, true)}</p>
         </div>
@@ -48,7 +63,8 @@ export default function ActivityDetail({ a, memberName, customerName, product })
 
       <dl className="detail-grid">
         <dt>Member</dt><dd><span className="member-chip">{memberName}</span></dd>
-        <dt>Customer</dt><dd>{customerName}</dd>
+        {a.customerId && (<><dt>Customer</dt><dd>{customerName}</dd></>)}
+        {a.taskId && (<><dt>Task</dt><dd>🎯 {a.taskTitle || `Task #${a.taskId}`}</dd></>)}
         {a.attendees && (<><dt>Attendees</dt><dd>{a.attendees}</dd></>)}
       </dl>
 
@@ -71,6 +87,16 @@ export default function ActivityDetail({ a, memberName, customerName, product })
         </div>
       )}
       {!a.notes && !a.outcome && !a.productId && <p className="muted">No notes recorded.</p>}
+      {a.followUpAt && (
+        <div className={a.followUpDoneAt ? 'log-followup done' : 'log-followup'}>
+          <strong>⏰ Follow-up {a.followUpDoneAt ? '(done)' : ''}</strong>
+          <p className="log-text">
+            {fmtWhen(a.followUpAt, true)}
+            {a.followUpRemindMinutes ? ` · reminder ${REMIND_LABEL[a.followUpRemindMinutes] || ''}` : ' · reminder at the time'}
+            {a.followUpNote ? `\n${a.followUpNote}` : ''}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -35,9 +35,9 @@ public interface ActivityRepository extends JpaRepository<Activity, Long>, JpaSp
 			+ " from Activity a where a.tenantId = ?1 and a.ownerId in ?2 and a.customerId in ?3 group by a.customerId")
 	List<Object[]> statsByCustomer(Long tenantId, Collection<Long> owners, Collection<Long> customerIds);
 
-	/** Activities logged per owner in [from, to): [ownerId, count]. */
+	/** Activities (meetings, calls, ...; not sales) logged per owner in [from, to): [ownerId, count]. */
 	@Query("select a.ownerId, count(a) from Activity a where a.tenantId = ?1 and a.ownerId in ?2"
-			+ " and a.activityTime >= ?3 and a.activityTime < ?4 group by a.ownerId")
+			+ " and a.productId is null and a.activityTime >= ?3 and a.activityTime < ?4 group by a.ownerId")
 	List<Object[]> countByOwnerBetween(Long tenantId, Collection<Long> owners, java.time.LocalDateTime from,
 			java.time.LocalDateTime to);
 
@@ -47,6 +47,18 @@ public interface ActivityRepository extends JpaRepository<Activity, Long>, JpaSp
 	List<Object[]> tenantStats(java.time.LocalDateTime since);
 
 	List<Activity> findByTenantIdOrderByActivityTimeDesc(Long tenantId, org.springframework.data.domain.Pageable page);
+
+	/** Follow-ups of these people, open (not done) or done, soonest first. */
+	@Query("select a from Activity a where a.tenantId = ?1 and a.ownerId in ?2 and a.followUpAt is not null"
+			+ " and ((?3 = true and a.followUpDoneAt is null) or (?3 = false and a.followUpDoneAt is not null))"
+			+ " order by a.followUpAt")
+	List<Activity> findFollowUps(Long tenantId, Collection<Long> owners, boolean open,
+			org.springframework.data.domain.Pageable page);
+
+	/** Open follow-ups whose reminder has not gone out, due before the given time (a day ahead covers every option). */
+	@Query("select a from Activity a where a.followUpAt is not null and a.followUpDoneAt is null"
+			+ " and a.followUpRemindedAt is null and a.followUpAt <= ?1")
+	List<Activity> findRemindersDueBy(java.time.LocalDateTime time);
 
 	@Transactional
 	@Modifying

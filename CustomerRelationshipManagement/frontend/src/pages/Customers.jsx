@@ -4,7 +4,9 @@ import { money, useOwners } from '../format.js';
 import Modal, { Field, ConfirmDialog } from '../Modal.jsx';
 import { PayBadge, fmtNum, fmtWhen, typeOf } from '../ActivityDetail.jsx';
 
-const empty = { firstName: '', lastName: '', email: '', phone: '', company: '' };
+/** A customer needs a name and at least one of mobile, email or address. */
+const empty = { name: '', phone: '', email: '', address: '', company: '' };
+const fullName = (c) => c.name || ` ${c.lastName || ''}`.trim();
 
 /** Customers as a short list; click a row for contact details and the customer's activity history. */
 export default function Customers({ user }) {
@@ -51,7 +53,7 @@ export default function Customers({ user }) {
   const openEdit = (c) => {
     setViewing(null);
     setEditingId(c.id);
-    setForm({ firstName: c.firstName, lastName: c.lastName, email: c.email, phone: c.phone || '', company: c.company || '' });
+    setForm({ name: fullName(c), phone: c.phone || '', email: c.email || '', address: c.address || '', company: c.company || '' });
     setFormError('');
     setOpen(true);
   };
@@ -60,6 +62,10 @@ export default function Customers({ user }) {
   const submit = async (e) => {
     e.preventDefault();
     setFormError('');
+    if (![form.phone, form.email, form.address].some((v) => v.trim())) {
+      setFormError('Add at least a mobile number, email or address.');
+      return;
+    }
     try {
       if (editingId) await customersApi.update(editingId, form);
       else await customersApi.create(form);
@@ -117,12 +123,12 @@ export default function Customers({ user }) {
                 <tr key={c.id} className="clickable" tabIndex={0} onClick={() => setViewing(c)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setViewing(c); } }}>
                   <td className="two-line">
-                    <strong>{c.firstName} {c.lastName}</strong>
+                    <strong>{fullName(c)}</strong>
                     <span className="muted">{c.company || '—'}</span>
                   </td>
                   <td className="two-line">
-                    <span>{c.email}</span>
-                    <span className="muted">{c.phone || '—'}</span>
+                    <span>{c.phone || c.email || c.address || '—'}</span>
+                    <span className="muted">{c.phone ? (c.email || c.address || '') : c.email ? (c.address || '') : ''}</span>
                   </td>
                   {multi && <td><span className={c.ownerId === user.id ? 'member-chip me' : 'member-chip'}>{ownerName(c.ownerId)}</span></td>}
                   <td className="two-line">
@@ -154,11 +160,12 @@ export default function Customers({ user }) {
       {data.totalPages <= 1 && data.totalElements > 0 && <p className="muted hint">{fmtNum(data.totalElements)} customers</p>}
 
       {viewing && (
-        <Modal wide title={`${viewing.firstName} ${viewing.lastName}`} onClose={() => setViewing(null)}>
+        <Modal wide title={fullName(viewing)} onClose={() => setViewing(null)}>
           <dl className="detail-grid">
             <dt>Company</dt><dd>{viewing.company || '—'}</dd>
-            <dt>Email</dt><dd><a href={`mailto:${viewing.email}`}>{viewing.email}</a></dd>
-            <dt>Phone</dt><dd>{viewing.phone ? <a href={`tel:${viewing.phone}`}>{viewing.phone}</a> : '—'}</dd>
+            <dt>Mobile</dt><dd>{viewing.phone ? <a href={`tel:${viewing.phone}`}>{viewing.phone}</a> : '—'}</dd>
+            <dt>Email</dt><dd>{viewing.email ? <a href={`mailto:${viewing.email}`}>{viewing.email}</a> : '—'}</dd>
+            <dt>Address</dt><dd className="pre-line">{viewing.address || '—'}</dd>
             {multi && (<><dt>Owner</dt><dd><span className="member-chip">{ownerName(viewing.ownerId)}</span></dd></>)}
             <dt>Added</dt><dd>{viewing.createdAt ? fmtWhen(viewing.createdAt, true) : '—'}</dd>
           </dl>
@@ -193,7 +200,7 @@ export default function Customers({ user }) {
 
       {toDelete && (
         <ConfirmDialog
-          message={`Delete ${toDelete.firstName} ${toDelete.lastName}? All of this customer's activities and recorded sales will be deleted too. This cannot be undone.`}
+          message={`Delete ${fullName(toDelete)}? All of this customer's activities and recorded sales will be deleted too. This cannot be undone.`}
           onConfirm={remove} onCancel={() => setToDelete(null)} />
       )}
 
@@ -202,12 +209,17 @@ export default function Customers({ user }) {
           <form onSubmit={submit} autoComplete="off">
             {formError && <p className="error">{formError}</p>}
             <div className="form-grid">
-              <Field label="First name"><input name="firstName" value={form.firstName} onChange={onChange} required autoFocus /></Field>
-              <Field label="Last name"><input name="lastName" value={form.lastName} onChange={onChange} required /></Field>
-              <Field label="Email"><input name="email" type="email" value={form.email} onChange={onChange} required /></Field>
-              <Field label="Phone"><input name="phone" value={form.phone} onChange={onChange} /></Field>
-              <Field label="Company" wide><input name="company" value={form.company} onChange={onChange} /></Field>
+              <Field label="Name" wide><input name="name" value={form.name} onChange={onChange} required autoFocus maxLength={250}
+                placeholder="e.g. Meera Iyer" /></Field>
+              <Field label="Mobile"><input name="phone" type="tel" value={form.phone} onChange={onChange} maxLength={25}
+                pattern="[+0-9 ()\-.]{7,25}" title="Digits, with or without country code" placeholder="98765 43210" /></Field>
+              <Field label="Email"><input name="email" type="email" value={form.email} onChange={onChange} maxLength={254}
+                placeholder="name@example.com" /></Field>
+              <Field label="Address" wide><textarea name="address" rows={2} value={form.address} onChange={onChange} maxLength={500}
+                className="short" placeholder="Street, area, city" /></Field>
+              <Field label="Company (optional)" wide><input name="company" value={form.company} onChange={onChange} maxLength={150} /></Field>
             </div>
+            <p className="muted hint">Name and at least one of mobile, email or address.</p>
             <div className="modal-actions">
               <button type="button" onClick={close}>Cancel</button>
               <button type="submit" className="primary">{editingId ? 'Save changes' : 'Add customer'}</button>

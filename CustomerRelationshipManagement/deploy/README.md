@@ -159,6 +159,47 @@ docker compose exec db psql -U crm -d crm -c "DELETE FROM app_users WHERE role =
 docker compose up -d app                    # recreated on start with the new password
 ```
 
+## Connecting WhatsApp (Meta Cloud API)
+
+The CRM works without this: the WhatsApp page then has a test chat, and alerts and summaries wait in an outbox.
+Connecting a real WhatsApp number:
+
+1. **Meta accounts.** Create a business portfolio at business.facebook.com, then an app of type *Business* at
+   developers.facebook.com, and add the **WhatsApp** product. Meta gives you a free test number that can message up
+   to 5 phone numbers you add under *WhatsApp → API Setup*.
+2. **Values for `.env`:**
+   - `WHATSAPP_PHONE_NUMBER_ID`: *WhatsApp → API Setup*.
+   - `WHATSAPP_ACCESS_TOKEN`: create a **System User** in Business Settings, give it the app and the WhatsApp
+     account, and generate a token with `whatsapp_business_messaging` and `whatsapp_business_management`. (The
+     token on the API Setup page expires after 24 hours; fine for a first try only.)
+   - `WHATSAPP_APP_SECRET`: *App settings → Basic → App secret*. Used to check that incoming calls really come
+     from Meta.
+   - `WHATSAPP_VERIFY_TOKEN`: any long random word you choose (`openssl rand -hex 16`).
+3. Restart: `docker compose up -d`.
+4. **Webhook.** In *WhatsApp → Configuration* enter the callback URL `https://YOUR_DOMAIN/api/whatsapp/webhook`
+   and the same verify token, press *Verify and save*, then subscribe to the **messages** field.
+5. **Templates.** In *WhatsApp Manager → Message templates* create six **Utility** templates in your template
+   language (names must match exactly):
+
+   | Name | Body | Button |
+   |---|---|---|
+   | `crm_task_assigned` | `🎯 New task: {{1}}` | none |
+   | `crm_team_update` | `🔔 Team update: {{1}}` | none |
+   | `crm_daily_summary` | `📊 Your daily summary for {{1}} is ready.` | Quick reply: `Show summary` |
+   | `crm_new_enquiry` | `📥 New enquiry: {{1}}` | none |
+   | `crm_follow_up_reminder` | `⏰ Reminder: {{1}}` | none |
+
+   Until a template is approved, messages using it fail and are retried (after 1, 5, 15 and 60 minutes).
+6. **Try it.** On the WhatsApp page get a link code and send it from your phone to the WhatsApp number. Type
+   `menu`. Then set `WHATSAPP_TEST_CHAT=false` and restart.
+7. **Going live with your own number:** complete *Business verification* (Security Center), add your number in
+   WhatsApp Manager (it must not be used in the WhatsApp app), get the display name approved, add a payment method,
+   and put the new phone number id in `.env`.
+
+How sending works: replies within 24 hours of the person's last message are normal messages. Alerts and summaries
+outside that window use the templates above. Messages that could not be delivered within a day are skipped, not
+sent late. Problems show in `docker compose logs app` (look for "WhatsApp").
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -167,5 +208,7 @@ docker compose up -d app                    # recreated on start with the new pa
 | Sign-in says "Please reload the page and try again" | The page was opened on a different address than `DOMAIN` in `.env` (e.g. the bare IP). Use the domain. |
 | `app` keeps restarting | Wrong `DB_PASSWORD`, or not enough memory. See `docker compose logs app`. |
 | Slow first page after a release | Java warms up during the first requests; it settles within a minute. |
+| Meta says the webhook could not be verified | `WHATSAPP_VERIFY_TOKEN` differs from what you typed, or `WHATSAPP_APP_SECRET` is empty (the webhook is off until both are set). |
+| No replies on WhatsApp | Check `docker compose logs app` for "WhatsApp". Error 190 = token expired or wrong; 131030 = recipient not in the test number's allowed list; 132001 = template name or language not approved. |
 
 Useful commands: `docker compose logs -f app`, `docker compose restart app`, `docker stats`, `df -h`.

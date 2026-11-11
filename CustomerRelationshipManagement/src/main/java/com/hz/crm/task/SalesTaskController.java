@@ -74,9 +74,12 @@ public class SalesTaskController {
 	private final AccessService access;
 	private final TaskProgressService progress;
 	private final StockService stock;
+	private final com.hz.crm.notification.NotificationService notifications;
 
 	public SalesTaskController(SalesTaskRepository tasks, ProductRepository products, ActivityRepository activities,
-			AccessService access, TaskProgressService progress, StockService stock) {
+			AccessService access, TaskProgressService progress, StockService stock,
+			com.hz.crm.notification.NotificationService notifications) {
+		this.notifications = notifications;
 		this.stock = stock;
 		this.progress = progress;
 		this.tasks = tasks;
@@ -260,7 +263,14 @@ public class SalesTaskController {
 			t.setFromStock(true);
 			t.setProductId(p.getId());
 		}
-		return view(s, tasks.save(t));
+		TaskView saved = view(s, tasks.save(t));
+		// tell the person who received the units (bell, and WhatsApp if they linked a number)
+		notifications.notifyUser(s.tenantId(), saved.assignedToId(), me, com.hz.crm.notification.Notification.Type.TASK_ASSIGNED,
+				name(s.tenantUsers().stream().filter(x -> x.getId().equals(me)).findFirst().orElse(null))
+						+ (saved.parentId() != null ? " handed you " : " assigned you ") + saved.units() + " " + saved.unit()
+						+ " of " + saved.productName() + (saved.title() != null ? ": \"" + saved.title() + "\"" : ""),
+				saved.id());
+		return saved;
 	}
 
 	@PutMapping("/{id}")
