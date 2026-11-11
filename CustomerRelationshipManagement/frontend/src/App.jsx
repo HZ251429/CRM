@@ -12,6 +12,7 @@ import Team from './pages/Team.jsx';
 import Products from './pages/Products.jsx';
 import Tasks from './pages/Tasks.jsx';
 import Stock from './pages/Stock.jsx';
+import WhatsApp from './pages/WhatsApp.jsx';
 import PlatformDashboard from './pages/PlatformDashboard.jsx';
 
 const ALL_TABS = {
@@ -21,14 +22,15 @@ const ALL_TABS = {
   Team: { page: Team, icon: '🧑‍🤝‍🧑' },
   Products: { page: Products, icon: '📦' },
   Stock: { page: Stock, icon: '🏬' },
+  WhatsApp: { page: WhatsApp, icon: '💬' },
   Tasks: { page: Tasks, icon: '🎯' },
   Tenants: { page: Tenants, icon: '🏢' },
 };
 
 const TABS_BY_ROLE = {
   SUPER_ADMIN: ['Dashboard', 'Tenants'],
-  TENANT_ADMIN: ['Dashboard', 'Team', 'Products', 'Stock', 'Tasks', 'Customers', 'Activities'],
-  MEMBER: ['Dashboard', 'Team', 'Tasks', 'Customers', 'Activities'],
+  TENANT_ADMIN: ['Dashboard', 'Team', 'Products', 'Stock', 'Tasks', 'Customers', 'Activities', 'WhatsApp'],
+  MEMBER: ['Dashboard', 'Team', 'Tasks', 'Customers', 'Activities', 'WhatsApp'],
 };
 
 const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', TENANT_ADMIN: 'Admin', MEMBER: 'Member' };

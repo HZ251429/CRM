@@ -93,6 +93,13 @@ export const stockApi = {
   add: (body) => request('/stock', { method: 'POST', body: JSON.stringify(body) }),
   removeEntry: (id) => request(`/stock/entries/${id}`, { method: 'DELETE' }),
 };
+export const whatsappApi = {
+  status: () => request('/whatsapp/status'),
+  linkCode: () => request('/whatsapp/link-code', { method: 'POST' }),
+  unlink: () => request('/whatsapp/link', { method: 'DELETE' }),
+  /** test chat: { phone, text } or { phone, replyId } -> the assistant's replies */
+  send: (body) => request('/whatsapp/test-chat', { method: 'POST', body: JSON.stringify(body) }),
+};
 export const notificationsApi = {
   list: (limit = 30) => request(`/notifications?limit=${limit}`),
   read: (id) => request(`/notifications/${id}/read`, { method: 'POST' }),
