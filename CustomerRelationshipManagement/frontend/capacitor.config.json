@@ -1,0 +1,25 @@
+{
+  "appId": "com.hz.crm",
+  "appName": "HZ CRM",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "ios": {
+    "contentInset": "never"
+  },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "CapacitorCookies": { "enabled": true },
+    "SplashScreen": {
+      "launchShowDuration": 800,
+      "backgroundColor": "#1c1027",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#1c1027",
+      "overlaysWebView": false
+    }
+  }
+}

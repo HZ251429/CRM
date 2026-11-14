@@ -31,6 +31,10 @@ public final class SpaCsrfTokenRequestHandler implements CsrfTokenRequestHandler
 	@Override
 	public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken csrfToken) {
 		String header = request.getHeader(csrfToken.getHeaderName());
-		return (StringUtils.hasText(header) ? this.plain : this.xor).resolveCsrfTokenValue(request, csrfToken);
+		// the web app sends the raw cookie value; the mobile app sends the masked token from GET /api/auth/csrf
+		if (StringUtils.hasText(header) && header.equals(csrfToken.getToken())) {
+			return this.plain.resolveCsrfTokenValue(request, csrfToken);
+		}
+		return this.xor.resolveCsrfTokenValue(request, csrfToken);
 	}
 }

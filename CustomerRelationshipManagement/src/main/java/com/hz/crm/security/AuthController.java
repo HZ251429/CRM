@@ -76,10 +76,14 @@ public class AuthController {
 				.body(Map.of("status", e.getStatusCode().value(), "message", String.valueOf(e.getReason())));
 	}
 
-	/** Issues the XSRF-TOKEN cookie; call once before the first POST (e.g. login). */
+	/**
+	 * Issues the XSRF-TOKEN cookie; call once before the first POST (e.g. login). The token is also in the body for
+	 * the mobile app, whose requests go through native HTTP so the page cannot read the cookie. Other sites cannot
+	 * read this response (no CORS for them), so returning it is as safe as the cookie.
+	 */
 	@GetMapping("/csrf")
 	public Map<String, String> csrf(CsrfToken token) {
-		return Map.of("headerName", token.getHeaderName());
+		return Map.of("headerName", token.getHeaderName(), "token", token.getToken());
 	}
 
 	@PostMapping("/login")

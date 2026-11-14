@@ -1,19 +1,30 @@
 {
-  "name": "crm-frontend",
-  "private": true,
-  "version": "0.0.1",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^5.4.11"
-  }
+    "name":  "crm-frontend",
+    "private":  true,
+    "version":  "0.0.1",
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "vite",
+                    "build":  "vite build",
+                    "preview":  "vite preview",
+                    "build:mobile":  "vite build --mode mobile \u0026\u0026 cap sync",
+                    "android":  "npm run build:mobile \u0026\u0026 cap open android",
+                    "ios":  "npm run build:mobile \u0026\u0026 cap open ios"
+                },
+    "dependencies":  {
+                         "@capacitor/android":  "^8.6.2",
+                         "@capacitor/app":  "^8.1.2",
+                         "@capacitor/core":  "^8.6.2",
+                         "@capacitor/ios":  "^8.6.2",
+                         "@capacitor/splash-screen":  "^8.0.2",
+                         "@capacitor/status-bar":  "^8.0.4",
+                         "react":  "^18.3.1",
+                         "react-dom":  "^18.3.1"
+                     },
+    "devDependencies":  {
+                            "@capacitor/assets":  "^4.0.0",
+                            "@capacitor/cli":  "^8.6.2",
+                            "@vitejs/plugin-react":  "^4.3.4",
+                            "vite":  "^5.4.11"
+                        }
 }

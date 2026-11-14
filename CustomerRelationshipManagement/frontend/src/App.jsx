@@ -33,7 +33,11 @@ const TABS_BY_ROLE = {
   MEMBER: ['Dashboard', 'Team', 'Tasks', 'Customers', 'Activities', 'WhatsApp'],
 };
 
-const ROLE_LABEL = { SUPER_ADMIN: 'Super Admin', TENANT_ADMIN: 'Admin', MEMBER: 'Member' };
+/** sections shown in the phone's bottom tab bar (in this order, up to four); the rest go under "More" */
+const PHONE_BAR = ['Dashboard', 'Tasks', 'Customers', 'Activities', 'Tenants'];
+const SHORT = { Dashboard: 'Home', Activities: 'Activity' };
+
+const ROLE_LABEL ={ SUPER_ADMIN: 'Super Admin', TENANT_ADMIN: 'Admin', MEMBER: 'Member' };
 
 /** Colour themes; each works in light and dark mode (see styles.css, :root[data-palette=...]). */
 // side = sidebar colour, accent = primary, accent2 = second gradient colour, bg = page background [light, dark]
@@ -66,6 +70,7 @@ export default function App() {
   const [systemDark, setSystemDark] = useState(darkQuery().matches);
   const [palette, setPalette] = useState(PALETTES.some((p) => p.id === readPref('palette')) ? readPref('palette') : 'sunset');
   const [themeOpen, setThemeOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const isDark = theme === 'dark' || (theme === 'auto' && systemDark);
 
   useEffect(() => {
@@ -90,6 +95,11 @@ export default function App() {
   const current = names.includes(tab) ? tab : names[0];
   // the super admin's dashboard is a platform overview, not a sales dashboard
   const Page = user.role === 'SUPER_ADMIN' && current === 'Dashboard' ? PlatformDashboard : ALL_TABS[current].page;
+  // phone layout: the main sections sit in a bottom tab bar, everything else under "More"
+  const barTabs = names.filter((n) => PHONE_BAR.includes(n)).slice(0, 4);
+  const moreTabs = names.filter((n) => !barTabs.includes(n));
+  const openTab = (name) => { setPageView(null); setTab(name); setMoreOpen(false); };
+  const signOut = async () => { await logout(); setMoreOpen(false); setUser(null); };
 
   return (
     <div className="shell">
@@ -117,13 +127,14 @@ export default function App() {
               {isDark ? '☀️' : '🌙'}
             </button>
           </div>
-          <button className="nav" onClick={async () => { await logout(); setUser(null); }}>
+          <button className="nav" onClick={signOut}>
             <span>🚪</span> Logout
           </button>
         </div>
       </aside>
       <main className="content">
         <div className="page-top">
+          <span className="phone-logo" aria-hidden="true">HZ</span>
           <h1 className="page-title">{current === 'Tenants' ? 'Tenant management' : current}</h1>
           {user.role !== 'SUPER_ADMIN' && (
             <NotificationBell onOpenTab={(t) => {
@@ -137,6 +148,43 @@ export default function App() {
         </div>
         <Page key={`${current}-${pageKey}`} user={user} view={pageView} />
       </main>
+      <nav className="tabbar" aria-label="Sections">
+        {barTabs.map((name) => (
+          <button key={name} type="button" className={name === current ? 'tabbar-btn active' : 'tabbar-btn'}
+            aria-current={name === current ? 'page' : undefined} onClick={() => openTab(name)}>
+            <span className="tabbar-icon" aria-hidden="true">{ALL_TABS[name].icon}</span>
+            <span className="tabbar-label">{SHORT[name] || name}</span>
+          </button>
+        ))}
+        <button type="button" className={moreTabs.includes(current) ? 'tabbar-btn active' : 'tabbar-btn'} onClick={() => setMoreOpen(true)}>
+          <span className="tabbar-icon" aria-hidden="true">☰</span>
+          <span className="tabbar-label">More</span>
+        </button>
+      </nav>
+      {moreOpen && (
+        <Modal title="More" onClose={() => setMoreOpen(false)}>
+          <div className="more-who">
+            <strong>{user.fullName || user.username}</strong>
+            <span className="muted">{ROLE_LABEL[user.role]}{user.tenantName ? ` · ${user.tenantName}` : ''}</span>
+          </div>
+          <div className="more-grid">
+            {moreTabs.map((name) => (
+              <button key={name} type="button" className={name === current ? 'more-item active' : 'more-item'} onClick={() => openTab(name)}>
+                <span aria-hidden="true">{ALL_TABS[name].icon}</span>{name}
+              </button>
+            ))}
+            <button type="button" className="more-item" onClick={() => { setMoreOpen(false); setThemeOpen(true); }}>
+              <span aria-hidden="true">🎨</span>Theme
+            </button>
+            <button type="button" className="more-item" onClick={() => setTheme(isDark ? 'light' : 'dark')}>
+              <span aria-hidden="true">{isDark ? '☀️' : '🌙'}</span>{isDark ? 'Light mode' : 'Dark mode'}
+            </button>
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="danger-outline" onClick={signOut}>🚪 Log out</button>
+          </div>
+        </Modal>
+      )}
       {themeOpen && (
         <Modal title="Appearance" onClose={() => setThemeOpen(false)}>
           <h4 className="detail-label">Mode</h4>

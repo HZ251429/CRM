@@ -8,16 +8,37 @@ export const getUser = () => {
 };
 export const isLoggedIn = () => !!getUser();
 
+/** true inside the Android / iOS app (Capacitor), false in a browser */
+export const isNativeApp = () => !!window.Capacitor?.isNativePlatform?.();
+
+// In the browser the CSRF token is read from the XSRF-TOKEN cookie. In the app, requests go through the phone's
+// native HTTP (cookies live there, not in the page), so the token comes from GET /auth/csrf and is kept in memory.
+let appToken = '';
 const csrfToken = () => {
+  if (isNativeApp()) return appToken;
   const m = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
   return m ? decodeURIComponent(m[1]) : '';
 };
+async function refreshCsrf() {
+  const res = await fetch(`${BASE}/auth/csrf`, { credentials: 'include' });
+  try { appToken = (await res.json()).token || ''; } catch { appToken = ''; }
+}
 
 async function send(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
-  const headers = { 'Content-Type': 'application/json' };
-  if (method !== 'GET') headers['X-XSRF-TOKEN'] = csrfToken();
-  return fetch(BASE + path, { ...options, method, headers, credentials: 'include' });
+  const go = () => {
+    const headers = { 'Content-Type': 'application/json' };
+    if (method !== 'GET') headers['X-XSRF-TOKEN'] = csrfToken();
+    return fetch(BASE + path, { ...options, method, headers, credentials: 'include' });
+  };
+  if (isNativeApp() && method !== 'GET' && !appToken) await refreshCsrf();
+  let res = await go();
+  // the app's token goes stale when the session changes (sign-in, server restart): fetch a new one and retry once
+  if (isNativeApp() && res.status === 403 && method !== 'GET') {
+    await refreshCsrf();
+    res = await go();
+  }
+  return res;
 }
 
 async function errorMessage(res) {
@@ -38,10 +59,12 @@ export async function logout() {
 }
 
 export async function login(username, password) {
-  if (!csrfToken()) await send('/auth/csrf');
+  if (isNativeApp()) await refreshCsrf();
+  else if (!csrfToken()) await send('/auth/csrf');
   const res = await send('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
   if (!res.ok) throw new Error(res.status === 403 ? 'Please reload the page and try again' : await errorMessage(res));
   const user = await res.json();
+  if (isNativeApp()) await refreshCsrf(); // signing in starts a new session with a new token
   sessionStorage.setItem('user', JSON.stringify(user));
   return user;
 }

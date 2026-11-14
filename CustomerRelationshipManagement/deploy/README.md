@@ -200,6 +200,26 @@ How sending works: replies within 24 hours of the person's last message are norm
 outside that window use the templates above. Messages that could not be delivered within a day are skipped, not
 sent late. Problems show in `docker compose logs app` (look for "WhatsApp").
 
+## Android and iOS apps (Capacitor)
+
+The apps are the same React screens packaged with [Capacitor](https://capacitorjs.com); the native projects are
+`frontend/android` and `frontend/ios`. They talk to your live server, so set up the website first.
+
+1. In `frontend`, copy `.env.mobile.example` to `.env.mobile` and set `VITE_API_URL=https://yourcrm.in/api`.
+2. `npm run build:mobile` builds the screens and copies them into both native projects (run it after every change).
+3. **Android** (Windows, Mac or Linux): install Android Studio, then `npm run android` opens the project. Run it on a
+   phone or emulator; for the Play Store use *Build → Generate Signed App Bundle* and upload the `.aab` in the
+   Play Console ($25 once).
+4. **iOS** (needs a Mac with Xcode, or a cloud Mac such as Codemagic): `npm run ios` opens the project in Xcode. Set
+   your team under *Signing & Capabilities*, then *Product → Archive* and upload to App Store Connect ($99 a year).
+5. App icon and splash screen: edit `frontend/assets/make-assets.cjs` (or replace the PNGs in `frontend/assets`), run
+   `node assets/make-assets.cjs`, then `npx capacitor-assets generate --android --ios`.
+
+Notes: the apps send requests through the phone's own HTTP stack, so no CORS setting is needed for them. The app id
+is `com.hz.crm` (in `frontend/capacitor.config.json`); choose your final id before the first store upload, as it can
+never change afterwards. On phones the website uses the same layout (bottom tab bar), so it also works well in a
+mobile browser.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
